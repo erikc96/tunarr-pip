@@ -13,6 +13,7 @@ It's a [Hammerspoon](https://www.hammerspoon.org) module that drives [mpv](https
 | **⌥\\** | Random channel |
 | **⌥9** | Channel list, with what's on each channel right now (type to search) |
 | **⌥0** | Turn it off |
+| **⌥V** | VHS: pick a movie or episode (needs a craigo.art/tv account, see below) |
 
 Inside the player you can use mpv's own keys: **m** mutes, **9**/**0** change the volume, **f** goes fullscreen. You can drag the player to move it.
 
@@ -76,6 +77,27 @@ tunarrPip = require('tunarr_pip').setup({
 ```
 
 Hammerspoon takes over the keys, so while it runs **⌥[**, **⌥]** and **⌥\\** no longer type “ ‘ «, and **⌥0–9** no longer type º¡™£¢∞§¶•ª. If you type any of those, move the player to other keys as shown above. Set a key to `nil` to turn it off.
+
+## craigo.art/tv club and VHS (optional)
+
+If you have a [craigo.art/tv](https://craigo.art/tv/) account, the player can count as watching there too:
+
+- **Fuzz in the menu bar.** The mascot's face shows its mood (dancing, fed, peckish, hungry, sad, static) and the number next to it is your streak. Its menu has the clubhouse: who's on now (click a channel to join), friends' streaks, weekly awards, top channels and your trophies.
+- **Watch time.** Every minute a channel or tape really plays (not paused, loading or hidden), the player tells the site, which feeds your streak, trophies and Fuzz. Stopping the player marks you as not watching.
+- **⌥V opens CRAIGO VIDEO**, the VHS store: new arrivals first, then every movie and show (type to search). Pick a show to choose an episode. Tapes play in the same player, pick up where you stopped, and when one plays to the end you get BE KIND, REWIND. Hiding the player pauses a tape.
+
+Save your craigo.art/tv password in the Keychain:
+
+```sh
+security add-generic-password -s craigo-tv -a YOUR_TV_USERNAME -w
+```
+
+and add two lines to `setup({...})`:
+
+```lua
+  tvUrl = 'https://craigo.art/tv',
+  tvUser = 'YOUR_TV_USERNAME',
+```
 
 ## Updating
 
