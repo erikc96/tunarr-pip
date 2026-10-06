@@ -87,6 +87,8 @@ If you have a [craigo.art/tv](https://craigo.art/tv/) account, the player can co
 - **Watch time.** Every minute a channel or tape really plays (not paused, loading or hidden), the player tells the site, which feeds your streak, trophies and Fuzz. Stopping the player marks you as not watching.
 - **⌥⇧V opens the panel's VHS tab**, the CRAIGO VIDEO store: cover art, with shelves for new arrivals, movies, TV and half-watched tapes, and a search box. Pick a show to choose an episode (the next one is marked). Tapes play in the same player, pick up where you stopped, and when one plays to the end you get BE KIND, REWIND. Hiding the player pauses a tape.
 
+**Keys in the panel** (vim style; press **?** in the panel for this list): **j/k** move, **h/l** move across the VHS shelf (**h** backs out of a show), **gg/G** top and bottom, **Ctrl-d/u/f/b** page, **Enter**/**o** play or open, **/** search (Esc leaves the box, Ctrl-n/p move from it), **t/c/v** or **H/L**/**gt/gT** tabs, **]/[** channel up/down, **r** random, **space** hide/show, **=/-** volume, **p** mini player, **X** off, **q**/**Esc** close.
+
 Save your craigo.art/tv password in the Keychain:
 
 ```sh

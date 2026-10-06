@@ -727,6 +727,7 @@ local function dock()
   panelSet = panel:frame()
 end
 M.dockPanel = dock
+M.panelEval = function(src, fn) if panel then panel:evaluateJavaScript(src, fn) end end -- for debugging/tests
 
 local onMessage -- below
 
@@ -823,6 +824,8 @@ onMessage = function(m)
     js('tab', J(panelTab))
     panelPush()
     if shelfCache then pushShelves() end
+  elseif m.act == 'tab' and (m.tab == 'tv' or m.tab == 'club' or m.tab == 'vhs') then
+    panelTab = m.tab
   elseif m.act == 'close' then
     if panel then panel:hide() end
   elseif m.act == 'shelves' then

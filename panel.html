@@ -59,6 +59,10 @@ input:focus { border-color: var(--osd); }
 .chans p:hover { color: var(--osd); }
 .chans p.on { color: var(--osd); text-shadow: 0 0 4px var(--osd-glow); }
 .chans p .dim { display: block; }
+.sel { outline: 1px solid var(--amber); outline-offset: 1px; color: var(--amber); }
+.tape.sel { outline-offset: 2px; }
+#help { position: fixed; inset: 46px 10px auto 10px; z-index: 5; background: #000e; border: 1px solid var(--amber); padding: 6px 10px 10px; }
+#help h3 { margin-top: 0; }
 .eps p { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 .eps p:hover { color: var(--osd); }
 .eps p.next { color: var(--amber); }
@@ -69,9 +73,21 @@ input:focus { border-color: var(--osd); }
   <button data-tab="club">CLUB</button>
   <button data-tab="vhs">VHS</button>
   <span class="sp"></span>
+  <span class="dim link" id="keys" title="vim keys">?</span>
   <span class="dim" id="now"></span>
   <button id="close" title="Esc">✕</button>
 </header>
+<div id="help" hidden>
+  <h3>KEYS</h3>
+  <p>j k · h l &nbsp; move (h l across tapes; h backs out)</p>
+  <p>gg G · ^d ^u ^f ^b &nbsp; top, bottom, pages</p>
+  <p>enter o l &nbsp; play / open</p>
+  <p>/ &nbsp; search · esc leaves it · ^n ^p move</p>
+  <p>t c v · H L · gt gT &nbsp; tabs</p>
+  <p>] [ &nbsp; channel up / down · r random</p>
+  <p>space &nbsp; hide / show · = - &nbsp; volume</p>
+  <p>p &nbsp; mini player · X &nbsp; off · q esc &nbsp; close</p>
+</div>
 <main id="tv" hidden>
   <div class="remote">
     <button data-cmd="down" title="⌥[">◀ CH</button><button data-cmd="up" title="⌥]">CH ▶</button>
@@ -136,7 +152,7 @@ app.tab = (t) => {
   $("tv").hidden = t !== "tv";
   if (t === "tv") send({ act: "channels" });
   $("vhs").hidden = t !== "vhs";
-  if (t === "vhs") { $("q").focus(); if (!tapes) send({ act: "shelves" }); }
+  if (t === "vhs" && !tapes) send({ act: "shelves" });
 };
 app.now = (s) => { $("now").textContent = s || ""; };
 
@@ -295,16 +311,98 @@ function renderChans() {
 $("cq").addEventListener("input", renderChans);
 for (const b of document.querySelectorAll("[data-cmd]")) b.onclick = () => send({ act: "remote", cmd: b.dataset.cmd });
 
-for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => app.tab(b.dataset.tab);
+for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => switchTab(b.dataset.tab);
 $("close").onclick = () => send({ act: "close" });
+$("keys").onclick = () => { $("help").hidden = !$("help").hidden; };
+// ---- vim keys ----
+// Normal mode unless a search box has focus. j/k/h/l move the cursor (h/l
+// across the VHS grid, h backs out of a show), Enter/o picks, / searches,
+// t/c/v switch tabs, the PiP keys work as letters, ? shows them all.
+const view = () => !$("tv").hidden ? "tv" : !$("vhs").hidden ? ($("showView").hidden ? "shelf" : "eps") : "club";
+const pane = () => $(view() === "tv" ? "tv" : view() === "club" ? "club" : "vhs");
+const items = () => [...document.querySelectorAll({ tv: "#chans p", shelf: "#shelf .tape", eps: ".eps p" }[view()] || "none")];
+const cols = () => view() === "shelf" ? 3 : 1;
+const sel = { tv: 0, shelf: 0, eps: 0 };
+function markSel(scroll) {
+  const v = view(), list = items();
+  document.querySelectorAll(".sel").forEach((n) => n.classList.remove("sel"));
+  if (!list.length || !(v in sel)) return;
+  sel[v] = Math.max(0, Math.min(list.length - 1, sel[v]));
+  list[sel[v]].classList.add("sel");
+  if (scroll) list[sel[v]].scrollIntoView({ block: "nearest" });
+}
+function move(d) {
+  const v = view();
+  if (v === "club") { pane().scrollBy(0, d * 40); return; }
+  sel[v] += d;
+  markSel(true);
+}
+function pick() { const it = items()[sel[view()]]; if (it) it.click(); }
+const TABS = ["tv", "club", "vhs"];
+const curTab = () => TABS.find((t) => !$(t).hidden);
+function switchTab(t) { app.tab(t); send({ act: "tab", tab: t }); document.activeElement.blur(); markSel(true); }
+const back = () => { if (view() === "eps") { renderShelf(); markSel(true); } };
+const remote = (cmd) => send({ act: "remote", cmd });
+
+let pending = "";   // first key of gg / gt / gT
+const KEYS = {
+  j: () => move(cols()), k: () => move(-cols()),
+  l: () => cols() > 1 ? move(1) : pick(), h: () => cols() > 1 ? move(-1) : back(),
+  ArrowDown: () => move(cols()), ArrowUp: () => move(-cols()),
+  ArrowRight: () => cols() > 1 ? move(1) : pick(), ArrowLeft: () => cols() > 1 ? move(-1) : back(),
+  G: () => { if (view() === "club") pane().scrollTop = 1e9; else { sel[view()] = 1e9; markSel(true); } },
+  Enter: pick, o: pick, Backspace: back, "-": () => remote("voldown"),
+  "/": () => { const q = view() === "tv" ? $("cq") : view() === "club" ? null : $("q"); if (q) { q.focus(); q.select(); } },
+  t: () => switchTab("tv"), c: () => switchTab("club"), v: () => switchTab("vhs"),
+  H: () => switchTab(TABS[(TABS.indexOf(curTab()) + 2) % 3]), L: () => switchTab(TABS[(TABS.indexOf(curTab()) + 1) % 3]),
+  "]": () => remote("up"), "[": () => remote("down"), r: () => remote("random"), " ": () => remote("toggle"),
+  "=": () => remote("volup"), "+": () => remote("volup"), p: () => remote("pip"), X: () => remote("stop"),
+  q: () => send({ act: "close" }), "?": () => { $("help").hidden = !$("help").hidden; },
+};
 document.addEventListener("keydown", (e) => {
+  const typing = e.target.tagName === "INPUT";
   if (e.key === "Escape") {
-    if (!$("showView").hidden) renderShelf();
-    else if (!$("vhs").hidden && $("q").value) { $("q").value = ""; renderShelf(); }
-    else if (!$("tv").hidden && $("cq").value) { $("cq").value = ""; renderChans(); }
+    e.preventDefault();
+    if (!$("help").hidden) $("help").hidden = true;
+    else if (typing) e.target.blur();                    // back to normal mode, keep the filter
+    else if (view() === "eps") back();
+    else if (view() === "shelf" && $("q").value) { $("q").value = ""; renderShelf(); markSel(true); }
+    else if (view() === "tv" && $("cq").value) { $("cq").value = ""; renderChans(); markSel(true); }
     else send({ act: "close" });
+    return;
   }
+  if (typing) {
+    // Enter or ctrl-n/p from the search box: leave it and move or pick.
+    if (e.key === "Enter") { e.preventDefault(); e.target.blur(); sel[view()] = 0; markSel(true); pick(); }
+    else if (e.ctrlKey && (e.key === "n" || e.key === "j")) { e.preventDefault(); move(cols()); }
+    else if (e.ctrlKey && (e.key === "p" || e.key === "k")) { e.preventDefault(); move(-cols()); }
+    return;
+  }
+  if (e.metaKey || e.altKey) return;
+  if (e.ctrlKey) {
+    const half = Math.max(1, Math.floor(pane().clientHeight / 2 / 40)) * cols();
+    if (e.key === "d") { e.preventDefault(); move(half); }
+    if (e.key === "u") { e.preventDefault(); move(-half); }
+    if (e.key === "f") { e.preventDefault(); move(half * 2); }
+    if (e.key === "b") { e.preventDefault(); move(-half * 2); }
+    return;
+  }
+  if (pending === "g") {
+    pending = "";
+    if (e.key === "g") { if (view() === "club") pane().scrollTop = 0; else { sel[view()] = 0; markSel(true); } }
+    else if (e.key === "t") KEYS.L();
+    else if (e.key === "T") KEYS.H();
+    e.preventDefault();
+    return;
+  }
+  if (e.key === "g") { pending = "g"; e.preventDefault(); return; }
+  const f = KEYS[e.key];
+  if (f) { e.preventDefault(); f(); }
 });
+// Keep the cursor on its row as lists re-render (what's-on updates, filtering).
+new MutationObserver(() => markSel(false)).observe(document.body, { childList: true, subtree: true });
+$("q").addEventListener("input", () => { sel.shelf = 0; });
+$("cq").addEventListener("input", () => { sel.tv = 0; });
 send({ act: "ready" });
 </script>
 </body></html>
