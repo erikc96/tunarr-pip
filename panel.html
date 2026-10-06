@@ -51,19 +51,38 @@ input:focus { border-color: var(--osd); }
 .tape .t { font-size: .85em; line-height: 1; margin-top: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tape b { position: absolute; top: 3px; left: 3px; background: var(--amber); color: #000; font-weight: normal; font-size: .7em; padding: 0 3px; }
 .tape b.seen { background: var(--osd); }
+.remote { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 0 8px; }
+.remote button { font: inherit; background: #000; color: var(--label); border: 1px solid var(--line); padding: 3px 0; cursor: pointer; }
+.remote button:hover { color: var(--osd); border-color: var(--osd); box-shadow: 0 0 6px var(--osd-glow); }
+.remote button:active { transform: translateY(1px); }
+.chans p { padding: 3px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.chans p:hover { color: var(--osd); }
+.chans p.on { color: var(--osd); text-shadow: 0 0 4px var(--osd-glow); }
+.chans p .dim { display: block; }
 .eps p { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 .eps p:hover { color: var(--osd); }
 .eps p.next { color: var(--amber); }
 </style></head>
 <body>
 <header>
+  <button data-tab="tv">TV</button>
   <button data-tab="club">CLUB</button>
   <button data-tab="vhs">VHS</button>
   <span class="sp"></span>
   <span class="dim" id="now"></span>
   <button id="close" title="Esc">✕</button>
 </header>
-<main id="club"></main>
+<main id="tv" hidden>
+  <div class="remote">
+    <button data-cmd="down" title="⌥[">◀ CH</button><button data-cmd="up" title="⌥]">CH ▶</button>
+    <button data-cmd="random" title="⌥\">RANDOM</button><button data-cmd="toggle" title="press the channel again">HIDE</button>
+    <button data-cmd="voldown" title="⌥-">VOL −</button><button data-cmd="volup" title="⌥=">VOL +</button>
+    <button data-cmd="pip" title="mini player on this screen">PIP</button><button data-cmd="stop" title="⌥0">OFF</button>
+  </div>
+  <input id="cq" placeholder="FIND A CHANNEL…" autocomplete="off" spellcheck="false">
+  <div class="chans" id="chans"></div>
+</main>
+<main id="club" hidden></main>
 <main id="vhs" hidden>
   <input id="q" placeholder="SEARCH THE STORE…" autocomplete="off" spellcheck="false">
   <div class="chips" id="chips"></div>
@@ -114,6 +133,8 @@ const app = window.app = {};
 app.tab = (t) => {
   for (const b of document.querySelectorAll("[data-tab]")) b.classList.toggle("on", b.dataset.tab === t);
   $("club").hidden = t !== "club";
+  $("tv").hidden = t !== "tv";
+  if (t === "tv") send({ act: "channels" });
   $("vhs").hidden = t !== "vhs";
   if (t === "vhs") { $("q").focus(); if (!tapes) send({ act: "shelves" }); }
 };
@@ -250,12 +271,37 @@ app.show = (t) => {
   if (next) eps.children[t.episodes.indexOf(next)].scrollIntoView({ block: "center" });
 };
 
+// ---- TV remote ----
+let chans = [], cur = null;
+app.channels = (list, current) => { chans = Array.isArray(list) ? list : []; cur = current; renderChans(); };
+app.np = (n, text) => { const c = chans.find((x) => x.number === n); if (c) { c.np = text; renderChans(); } };
+app.current = (n, hidden) => {
+  cur = n; renderChans();
+  document.querySelector('[data-cmd="toggle"]').textContent = hidden ? "SHOW" : "HIDE";
+};
+function renderChans() {
+  const box = $("chans"), q = $("cq").value.trim().toLowerCase(), keep = $("tv").scrollTop;
+  box.textContent = "";
+  if (!chans.length) { box.append(el("p", "dim", "TUNING…")); return; }
+  for (const c of chans) {
+    if (q && !(c.name + " " + (c.np || "")).toLowerCase().includes(q)) continue;
+    const p = el("p", c.number === cur ? "on" : "", `${c.number === cur ? "▶ " : ""}${pad(c.number)}  ${c.name.toUpperCase()}`);
+    p.append(el("span", "dim", c.np || "…"));
+    p.onclick = () => send({ act: "play", channel: c.number });
+    box.append(p);
+  }
+  $("tv").scrollTop = keep;
+}
+$("cq").addEventListener("input", renderChans);
+for (const b of document.querySelectorAll("[data-cmd]")) b.onclick = () => send({ act: "remote", cmd: b.dataset.cmd });
+
 for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => app.tab(b.dataset.tab);
 $("close").onclick = () => send({ act: "close" });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (!$("showView").hidden) renderShelf();
-    else if ($("q").value) { $("q").value = ""; renderShelf(); }
+    else if (!$("vhs").hidden && $("q").value) { $("q").value = ""; renderShelf(); }
+    else if (!$("tv").hidden && $("cq").value) { $("cq").value = ""; renderChans(); }
     else send({ act: "close" });
   }
 });

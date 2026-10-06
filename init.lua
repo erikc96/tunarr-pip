@@ -8,7 +8,7 @@
 -- opt-] / opt-[  channel up / down (wraps)
 -- opt-\         random channel
 -- opt-= / opt--  volume up / down
--- opt-v          the Fuzz panel's VHS store: pick a Plex movie or episode
+-- opt-shift-v    the Fuzz panel's VHS store: pick a Plex movie or episode
 --
 -- With tvUrl/tvUser set (a craigo.art/tv account), the player also counts as
 -- watching there: it posts a beat every minute a channel or tape really plays,
@@ -51,7 +51,7 @@ M.config = {
   mpv = nil,       -- default: Homebrew's mpv (Apple silicon or Intel)
   tvUrl = nil,     -- craigo.art/tv style site, e.g. 'https://craigo.art/tv'; enables the club and VHS
   tvUser = nil,    -- its login; password in the Keychain (service 'craigo-tv')
-  vhsKey = 'v',
+  vhsKey = { { 'alt', 'shift' }, 'v' }, -- opt-shift-v (another app often owns opt-v)
   menubar = true,  -- Fuzz in the menu bar (needs tvUrl)
 }
 
@@ -606,7 +606,7 @@ M.refresh = function() loadVibe() end
 -- The Fuzz panel: a window docked beside the PiP with the clubhouse (CLUB)
 -- and the VHS store (VHS). panel.html draws it; messages come back here.
 --------------------------------
-local panel, panelReady, panelTab = nil, false, 'club'
+local panel, panelReady, panelTab = nil, false, 'tv'
 local panelSet = nil   -- frame we last docked it to; a different one means it was dragged
 local byKey = {}       -- tape key -> tape, for clicks from the panel
 local shelfCache, shelfAt = nil, 0
@@ -778,6 +778,45 @@ end
 
 function M.vhs() M.panel('vhs') end
 
+-- The TV tab: every channel with what's on now, as the opt-9 picker shows it.
+local function pushChannels()
+  hs.http.asyncGet(M.config.baseUrl .. '/api/channels', HEADERS, function(status, body)
+    local channels = status == 200 and hs.json.decode(body) or nil
+    if type(channels) ~= 'table' then return end
+    table.sort(channels, function(a, b) return a.number < b.number end)
+    local rows = {}
+    for i, ch in ipairs(channels) do
+      rows[i] = { number = ch.number, name = ch.name }
+      names[ch.number] = ch.name
+    end
+    js('channels', #rows > 0 and J(rows) or '[]', J(current or false))
+    for _, ch in ipairs(channels) do
+      hs.http.asyncGet(M.config.baseUrl .. '/api/channels/' .. ch.id .. '/now_playing', HEADERS, function(s, b)
+        local ok, np = pcall(hs.json.decode, b or '')
+        js('np', J(ch.number), J(s == 200 and ok and describe(np) or ''))
+      end)
+    end
+  end)
+end
+
+local function syncRemote()
+  js('now', J(nowText()))
+  js('current', J(current or false), J(hidden))
+end
+
+local REMOTE = {
+  up = function() M.step(1) end,
+  down = function() M.step(-1) end,
+  random = function() M.random() end,
+  volup = function() M.volume(M.config.volStep) end,
+  voldown = function() M.volume(-M.config.volStep) end,
+  toggle = function()
+    if current and running() then M.play(current) elseif last then M.play(last) end
+  end,
+  pip = function() M.pip() end,
+  stop = function() M.stop() end,
+}
+
 onMessage = function(m)
   if m.act == 'ready' then
     panelReady = true
@@ -797,7 +836,15 @@ onMessage = function(m)
     if t then M.playTape(t) end
   elseif m.act == 'play' and tonumber(m.channel) then
     M.play(tonumber(m.channel))
-    js('now', J(nowText()))
+    syncRemote()
+    hs.timer.doAfter(2, dock)
+  elseif m.act == 'channels' then
+    pushChannels()
+    syncRemote()
+  elseif m.act == 'remote' and REMOTE[m.cmd] then
+    REMOTE[m.cmd]()
+    -- up/down/random may wait on the channel list
+    hs.timer.doAfter(0.5, syncRemote)
     hs.timer.doAfter(2, dock)
   end
 end
@@ -900,8 +947,10 @@ function M.volume(delta)
   ipc({ 'osd-msg-bar', 'add', 'volume', delta })
 end
 
+-- key: 'x' for opt-x, or { mods, 'x' }.
 local function bind(key, fn)
-  if key then hs.hotkey.bind({ 'alt' }, key, fn) end
+  if type(key) == 'table' then hs.hotkey.bind(key[1], key[2], fn)
+  elseif key then hs.hotkey.bind({ 'alt' }, key, fn) end
 end
 
 function M.setup(opts)
@@ -950,7 +999,7 @@ function M.setup(opts)
       if c.menubar then
         menu = hs.menubar.new()
         menu:setIcon(fuzzIcon('ok'), true)
-        menu:setClickCallback(function() M.panel('club') end)
+        menu:setClickCallback(function() M.panel() end)
       end
       loadVibe()
       M.vibeTimer = hs.timer.doEvery(120, loadVibe)
