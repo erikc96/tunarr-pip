@@ -1,0 +1,264 @@
+<!doctype html>
+<!-- The Fuzz panel next to the PiP: clubhouse stats and the VHS store.
+     init.lua fills in the font, pushes data with app.*(), and gets clicks back
+     through webkit.messageHandlers.fuzz. -->
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: "VT323"; src: url(data:font/woff2;base64,{{FONT}}) format("woff2"); }
+:root { --bg: #0b0b10; --glow: #1b2340; --label: #b9ad93; --osd: #8dff8a; --osd-glow: rgba(120,255,130,.55); --amber: #ffb347; --line: #2a2924; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body { background: radial-gradient(ellipse at 50% 0%, var(--glow), var(--bg) 70%); color: var(--label);
+  font: 19px/1.15 "VT323", Menlo, monospace; display: flex; flex-direction: column; overflow: hidden;
+  -webkit-user-select: none; cursor: default; }
+header { display: flex; align-items: center; gap: 6px; padding: 8px 10px 6px; -webkit-app-region: drag; }
+header button { font: inherit; background: none; color: var(--label); border: 1px solid var(--line); padding: 0 8px; cursor: pointer; letter-spacing: .1em; }
+header button.on { color: var(--osd); border-color: var(--osd); text-shadow: 0 0 4px var(--osd-glow); }
+header .sp { flex: 1; }
+main { flex: 1; overflow-y: auto; padding: 0 10px 10px; }
+h3 { margin: 10px 0 3px; font: inherit; color: var(--amber); letter-spacing: .12em; }
+p { margin: 0 0 2px; }
+.dim { opacity: .65; font-size: .85em; }
+.fuzzbox { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
+.fuzz { width: 92px; height: 83px; flex: none; color: var(--osd); filter: drop-shadow(0 0 3px var(--osd-glow)); cursor: pointer; }
+.fuzz.ok { opacity: .8; }
+.fuzz.hungry { color: var(--amber); filter: drop-shadow(0 0 3px rgba(255,179,71,.5)); }
+.fuzz.sad { color: #8aa0c8; filter: none; }
+.fuzz.static { color: #bbb; filter: none; animation: fade 1.4s steps(3) infinite; }
+.fuzz.watching { animation: bop .7s steps(2) infinite; }
+.fuzz.pet { animation: pet .5s steps(4); }
+@keyframes bop { 50% { transform: translateY(-8%); } }
+@keyframes fade { 50% { opacity: .35; } }
+@keyframes pet { 25% { transform: rotate(-8deg); } 75% { transform: rotate(8deg); } }
+.bar { height: 8px; border: 1px solid var(--line); margin-top: 4px; }
+.bar i { display: block; height: 100%; background: var(--osd); box-shadow: 0 0 6px var(--osd-glow); }
+.big { font-size: 1.5em; color: var(--osd); }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; text-align: center; margin-top: 8px; }
+.stats > div { border: 1px solid var(--line); padding: 3px 0; }
+a, .link { color: var(--osd); cursor: pointer; text-decoration: none; }
+.trophies { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 8px; }
+.trophies span.off { opacity: .3; }
+input { width: 100%; font: inherit; background: #000; color: var(--osd); border: 1px solid var(--line); padding: 2px 6px; outline: none; margin-bottom: 6px; }
+input:focus { border-color: var(--osd); }
+.chips { display: flex; gap: 4px; margin-bottom: 6px; }
+.chips button { font: inherit; font-size: .9em; background: none; color: var(--label); border: 1px solid var(--line); padding: 0 6px; cursor: pointer; }
+.chips button.on { color: var(--amber); border-color: var(--amber); }
+.shelf { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tape { cursor: pointer; position: relative; }
+.tape .cov { aspect-ratio: 2 / 3; background: #161616 center / cover; border: 1px solid var(--line); display: flex; align-items: flex-end; padding: 3px; font-size: .8em; overflow: hidden; }
+.tape:hover .cov { border-color: var(--osd); box-shadow: 0 0 6px var(--osd-glow); }
+.tape .t { font-size: .85em; line-height: 1; margin-top: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tape b { position: absolute; top: 3px; left: 3px; background: var(--amber); color: #000; font-weight: normal; font-size: .7em; padding: 0 3px; }
+.tape b.seen { background: var(--osd); }
+.eps p { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.eps p:hover { color: var(--osd); }
+.eps p.next { color: var(--amber); }
+</style></head>
+<body>
+<header>
+  <button data-tab="club">CLUB</button>
+  <button data-tab="vhs">VHS</button>
+  <span class="sp"></span>
+  <span class="dim" id="now"></span>
+  <button id="close" title="Esc">✕</button>
+</header>
+<main id="club"></main>
+<main id="vhs" hidden>
+  <input id="q" placeholder="SEARCH THE STORE…" autocomplete="off" spellcheck="false">
+  <div class="chips" id="chips"></div>
+  <div id="shelfView"><div class="shelf" id="shelf"></div></div>
+  <div id="showView" hidden></div>
+</main>
+<script>
+const send = (m) => webkit.messageHandlers.fuzz.postMessage(m);
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const pad = (n) => String(n).padStart(2, "0");
+const mins = (s) => `${Math.round((s || 0) / 60)} MIN`;
+const days = (n) => `${n} DAY${n === 1 ? "" : "S"}`;
+const clock = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`; };
+
+// Same pixel art and lists as craigo.art/tv.
+const FUZZ_BASE = ["..#....#..", "...#..#...", "..######..", ".########.", "", ".########.", "", "", "..##..##.."];
+const FUZZ = {
+  watching: [".#k####k#.", ".#k####k#.", "..#kkkk#.."], happy: [".#k####k#.", ".##k##k##.", "..##kk##.."],
+  ok: [".#k####k#.", ".##kkkk##.", "..######.."], hungry: [".#k####k#.", ".###kk###.", "..##kk##.."],
+  sad: [".#k####k#.", ".###kk###.", "..#k##k#.."], static: [".#k####k#.", ".##kkkk##.", "..######.."],
+};
+const MOODS = { watching: "FUZZ IS DANCING · SOMEONE'S TUNED IN", happy: "FUZZ IS FED FOR TODAY",
+  ok: "FUZZ IS PECKISH · NOBODY HAS WATCHED TODAY", hungry: "FUZZ IS HUNGRY · 2 DAYS WITHOUT TV",
+  sad: "FUZZ IS SAD · %d DAYS WITHOUT TV", static: "FUZZ IS FADING INTO STATIC…" };
+const PETS = ["♥", "PURR", "HEHE", "♪", "BZZT"];
+
+function fuzzSvg(mood, popcorn) {
+  const rows = FUZZ_BASE.slice(), m = FUZZ[mood] || FUZZ.ok;
+  [rows[4], rows[6], rows[7]] = m;
+  let r = "";
+  rows.forEach((row, y) => [...row].forEach((c, x) => {
+    if (c === "." ) return;
+    const fill = c === "k" ? "#000" : mood === "static" && Math.random() < 0.45 ? "#555" : "currentColor";
+    r += `<rect x="${x}" y="${y}" width="1.02" height="1.02" fill="${fill}"/>`;
+  }));
+  if (popcorn) {
+    r += `<rect x="10" y="5" width="2" height="3" fill="#ff4f6d"/><rect x="10.66" y="5" width=".66" height="3" fill="#fff"/>`;
+    r += `<rect x="10" y="4" width="1" height="1" fill="#ffe9a8"/><rect x="11" y="3.6" width="1" height="1" fill="#ffd23f"/>`;
+  }
+  return `<svg viewBox="0 0 ${popcorn ? 12 : 10} 9" shape-rendering="crispEdges">${r}</svg>`;
+}
+
+let V = null, names = {}, trophyList = [];
+const chName = (n) => n === 0 ? "A VHS TAPE" : `CH ${pad(n)}${names[n] ? " " + names[n].toUpperCase() : ""}`;
+const app = window.app = {};
+
+app.tab = (t) => {
+  for (const b of document.querySelectorAll("[data-tab]")) b.classList.toggle("on", b.dataset.tab === t);
+  $("club").hidden = t !== "club";
+  $("vhs").hidden = t !== "vhs";
+  if (t === "vhs") { $("q").focus(); if (!tapes) send({ act: "shelves" }); }
+};
+app.now = (s) => { $("now").textContent = s || ""; };
+
+app.vibe = (v, chNames, trophies) => {
+  V = v; names = chNames || names; trophyList = trophies || trophyList;
+  const body = $("club"), keep = body.scrollTop;
+  body.textContent = "";
+  const popcorn = v.live.some((l) => l.channel === 0);
+  const box = el("div", "fuzzbox"), pic = el("div", "fuzz " + v.mascot.mood), info = el("div");
+  pic.innerHTML = fuzzSvg(v.mascot.mood, popcorn);
+  pic.title = "pet Fuzz";
+  pic.onclick = () => {
+    pic.classList.remove("pet"); void pic.offsetWidth; pic.classList.add("pet");
+    app.now(PETS[Math.floor(Math.random() * PETS.length)]);
+  };
+  const mood = v.mascot.mood === "watching" && popcorn ? "FUZZ IS WATCHING A TAPE · POPCORN OUT"
+    : (MOODS[v.mascot.mood] || "").replace("%d", v.mascot.idle);
+  const bar = el("div", "bar"), fill = el("i");
+  fill.style.width = Math.min(100, v.mascot.fed / 36) + "%";
+  bar.append(fill);
+  info.append(el("p", null, mood), el("p", "dim", `FED TODAY ${mins(v.mascot.fed)} OF 60`), bar);
+  box.append(pic, info);
+  body.append(box);
+
+  const st = el("div", "stats");
+  for (const [n, l] of [[v.me.streak, "STREAK"], [Math.round(v.me.today / 60), "MIN TODAY"], [v.squad, "SQUAD"]]) {
+    const d = el("div"); d.append(el("div", "big", n), el("div", "dim", l)); st.append(d);
+  }
+  body.append(st);
+  body.append(el("p", "dim", `THIS WEEK ${mins(v.me.week)}${v.me.freeze ? " · FREEZE READY ❄" : ""}`));
+
+  body.append(el("h3", null, "ON NOW"));
+  if (!v.live.length) body.append(el("p", "dim", "NOBODY · BE THE FIRST"));
+  for (const l of v.live) {
+    const p = el("p", null, l.username.toUpperCase() + " · ");
+    const a = el("span", l.channel ? "link" : "", chName(l.channel));
+    if (l.channel) { a.title = "join"; a.onclick = () => send({ act: "play", channel: l.channel }); }
+    p.append(a); body.append(p);
+  }
+  body.append(el("h3", null, "FRIENDS"));
+  for (const f of v.friends) body.append(el("p", null, `${f.username.toUpperCase()} · STREAK ${f.streak} · ${f.trophies} ★`));
+
+  const [title, list] = v.awards.last.length ? ["LAST WEEK'S AWARDS", v.awards.last] : ["THIS WEEK SO FAR", v.awards.week];
+  body.append(el("h3", null, title));
+  if (!list.length) body.append(el("p", "dim", "NO AWARDS YET · WATCH 5 MIN TO ENTER"));
+  for (const a of list) body.append(el("p", null, `${a.award} · ${a.winners.join(" & ").toUpperCase()}`), el("p", "dim", a.detail));
+
+  if (v.top.length) {
+    body.append(el("h3", null, "TOP THIS WEEK"));
+    for (const t of v.top) {
+      const p = el("p", t.channel ? "link" : "", `${chName(t.channel)} · ${mins(t.seconds)}`);
+      if (t.channel) p.onclick = () => send({ act: "play", channel: t.channel });
+      body.append(p);
+    }
+  }
+  const got = new Set(v.trophies.map((t) => t.badge));
+  body.append(el("h3", null, `TROPHIES ${got.size}/${trophyList.length}`));
+  const g = el("div", "trophies");
+  for (const [id, name, how] of trophyList) { const s = el("span", got.has(id) ? "" : "off", (got.has(id) ? "★ " : "☆ ") + name); s.title = how; g.append(s); }
+  body.append(g);
+  body.scrollTop = keep;
+};
+
+// ---- VHS ----
+let tapes = null, shelf = "all";
+const covers = new Map(), waiting = new Map();
+const io = new IntersectionObserver((es) => {
+  for (const e of es) if (e.isIntersecting) { io.unobserve(e.target); wantCover(e.target.dataset.cover, e.target); }
+}, { root: $("vhs") });
+function wantCover(id, node) {
+  if (covers.has(id)) { node.style.backgroundImage = `url(${covers.get(id)})`; node.textContent = ""; return; }
+  if (!waiting.has(id)) { waiting.set(id, []); send({ act: "cover", cover: id }); }
+  waiting.get(id).push(node);
+}
+app.cover = (id, uri) => {
+  covers.set(id, uri);
+  for (const n of waiting.get(id) || []) { n.style.backgroundImage = `url(${uri})`; n.textContent = ""; }
+  waiting.delete(id);
+};
+app.shelves = (list) => { tapes = Array.isArray(list) ? list : []; renderShelf(); };
+
+function sticker(t) {
+  if (t.pos) return el("b", null, "HALF WATCHED");
+  if (t.done) return el("b", "seen", "SEEN IT");
+  if (t.isNew) return el("b", null, "NEW");
+  return null;
+}
+function renderChips() {
+  const c = $("chips"); c.textContent = "";
+  for (const [k, l] of [["all", "ALL"], ["new", "NEW"], ["movie", "MOVIES"], ["show", "TV"], ["half", "HALF WATCHED"]]) {
+    const b = el("button", shelf === k ? "on" : "", l);
+    b.onclick = () => { shelf = k; renderShelf(); };
+    c.append(b);
+  }
+}
+function renderShelf() {
+  renderChips();
+  $("showView").hidden = true; $("shelfView").hidden = false;
+  const g = $("shelf"); g.textContent = "";
+  if (!tapes) { g.append(el("p", "dim", "LOADING THE SHELVES…")); return; }
+  const q = $("q").value.trim().toLowerCase();
+  const list = tapes.filter((t) => (shelf === "all" || (shelf === "new" ? t.isNew : shelf === "half" ? t.pos : t.type === shelf))
+    && (!q || t.title.toLowerCase().includes(q))).slice(0, 300);
+  if (!list.length) g.append(el("p", "dim", "NOTHING ON THIS SHELF"));
+  for (const t of list) {
+    const d = el("div", "tape"), cov = el("div", "cov", t.title);
+    if (t.cover) { cov.dataset.cover = t.cover; io.observe(cov); }
+    d.append(cov, el("div", "t", t.title + (t.year ? ` (${t.year})` : "")));
+    const s = sticker(t); if (s) d.append(s);
+    d.title = t.type === "show" ? "pick an episode" : (t.pos ? "resume at " + clock(t.pos) : t.duration ? clock(t.duration) : "");
+    d.onclick = () => t.type === "show" ? send({ act: "show", key: t.key }) : send({ act: "tape", key: t.key });
+    g.append(d);
+  }
+}
+$("q").addEventListener("input", () => renderShelf());
+
+app.show = (t) => {
+  const v = $("showView"); v.textContent = "";
+  $("shelfView").hidden = true; v.hidden = false;
+  const back = el("p", "link", "◀ BACK TO THE SHELF"); back.onclick = renderShelf;
+  v.append(back, el("h3", null, t.title.toUpperCase()));
+  if (t.summary) v.append(el("p", "dim", t.summary));
+  const eps = el("div", "eps"), next = t.episodes.find((e) => e.pos) || t.episodes.find((e) => !e.done);
+  for (const e of t.episodes) {
+    const p = el("p", e === next ? "next" : "");
+    p.append(el("span", null, `${e === next ? "▶ " : ""}S${pad(e.season)}E${pad(e.episode)} ${e.title}`),
+      el("span", "dim", e.pos ? "AT " + clock(e.pos) : e.done ? "✓" : e.duration ? clock(e.duration) : ""));
+    p.onclick = () => send({ act: "tape", key: e.key, show: t.title });
+    eps.append(p);
+  }
+  v.append(eps);
+  if (next) eps.children[t.episodes.indexOf(next)].scrollIntoView({ block: "center" });
+};
+
+for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => app.tab(b.dataset.tab);
+$("close").onclick = () => send({ act: "close" });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (!$("showView").hidden) renderShelf();
+    else if ($("q").value) { $("q").value = ""; renderShelf(); }
+    else send({ act: "close" });
+  }
+});
+send({ act: "ready" });
+</script>
+</body></html>

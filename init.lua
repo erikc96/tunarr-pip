@@ -8,12 +8,12 @@
 -- opt-] / opt-[  channel up / down (wraps)
 -- opt-\         random channel
 -- opt-= / opt--  volume up / down
--- opt-v          VHS: pick a Plex movie or episode and play it in the player
+-- opt-v          the Fuzz panel's VHS store: pick a Plex movie or episode
 --
 -- With tvUrl/tvUser set (a craigo.art/tv account), the player also counts as
 -- watching there: it posts a beat every minute a channel or tape really plays,
 -- which feeds streaks, trophies and Fuzz, the mascot. Fuzz lives in the menu
--- bar; its menu has the clubhouse stats.
+-- bar; clicking it opens the Fuzz panel (panel.html) beside the PiP.
 --
 -- TV static (static.lua, run inside mpv) covers the player while a channel
 -- loads and whenever the stream stalls.
@@ -464,15 +464,15 @@ local function tv(method, path, body, fn)
           return login(function(ok) if ok then go(false) else fn(401) end end)
         end
         local ok, data = pcall(hs.json.decode, b or '')
-        fn(status, ok and data or nil)
+        fn(status, ok and data or nil, b)
       end, 'ignoreLocalCache')
   end
   if COOKIE then go(true) else login(function(ok) if ok then go(false) else fn(401) end end) end
 end
 
-local vibe = nil
+local vibe, vibeRaw = nil, nil
 local menu = nil
-local loadVibe -- below
+local loadVibe, panelPush -- below
 
 local function trophyAlert(ids)
   if type(ids) ~= 'table' or #ids == 0 then return end
@@ -576,12 +576,6 @@ local function fuzzIcon(mood)
   return img
 end
 
-local function mins(s) return string.format('%d MIN', math.floor((s or 0) / 60 + 0.5)) end
-local function days(n) return string.format('%d DAY%s', n, n == 1 and '' or 'S') end
-local function chName(n)
-  if n == 0 then return 'A VHS TAPE' end
-  return string.format('CH %02d%s', n, names[n] and ' ' .. names[n]:upper() or '')
-end
 local function anyTape(v)
   for _, l in ipairs(v.live or {}) do if l.channel == 0 then return true end end
   return false
@@ -592,72 +586,12 @@ local function moodLine(m, v)
   return string.format(MOODS[m.mood] or '', m.idle or 0)
 end
 
-local function clubMenu()
-  local v = vibe
-  local items = {}
-  local function add(t) items[#items + 1] = t end
-  local function head(t) add({ title = t, disabled = true }) end
-  if not v then
-    head(tvOn() and 'Loading…' or 'craigo.art/tv: no login set up')
-  else
-    head(moodLine(v.mascot, v))
-    head(string.format('FED TODAY %s OF 60 · EVERYONE COUNTS', mins(v.mascot.fed)))
-    add({ title = '-' })
-    head(string.format('MY STREAK %s%s', days(v.me.streak), v.me.freeze and ' · FREEZE READY ❄' or ''))
-    head(string.format('TODAY %s · THIS WEEK %s', mins(v.me.today), mins(v.me.week)))
-    head('SQUAD STREAK ' .. days(v.squad))
-    add({ title = '-' })
-    if #v.live > 0 then
-      head('ON NOW')
-      for _, l in ipairs(v.live) do
-        add({ title = '  ' .. l.username:upper() .. ' · ' .. chName(l.channel),
-          fn = l.channel ~= 0 and function() M.play(l.channel) end or nil, disabled = l.channel == 0 })
-      end
-    else
-      head('NOBODY IS WATCHING RIGHT NOW')
-    end
-    local friends = {}
-    for _, f in ipairs(v.friends) do
-      friends[#friends + 1] = { title = string.format('%s · STREAK %d · %d ★', f.username:upper(), f.streak, f.trophies), disabled = true }
-    end
-    add({ title = 'Friends', menu = #friends > 0 and friends or { { title = 'none yet', disabled = true } } })
-    local title, list = "LAST WEEK'S AWARDS", v.awards.last
-    if #list == 0 then title, list = 'THIS WEEK SO FAR', v.awards.week end
-    local aw = {}
-    for _, a in ipairs(list) do
-      aw[#aw + 1] = { title = a.award .. ' · ' .. table.concat(a.winners, ' & '):upper(), tooltip = a.detail, disabled = true }
-    end
-    if #aw == 0 then aw[1] = { title = 'NO AWARDS YET · WATCH 5 MIN TO ENTER', disabled = true } end
-    add({ title = 'Awards', menu = { { title = title, disabled = true }, { title = '-' }, table.unpack(aw) } })
-    local top = {}
-    for _, t in ipairs(v.top) do
-      top[#top + 1] = { title = chName(t.channel) .. ' · ' .. mins(t.seconds),
-        fn = t.channel ~= 0 and function() M.play(t.channel) end or nil, disabled = t.channel == 0 }
-    end
-    if #top == 0 then top[1] = { title = 'nothing watched this week', disabled = true } end
-    add({ title = 'Top channels this week', menu = top })
-    local got = {}
-    for _, t in ipairs(v.trophies) do got[t.badge] = true end
-    local tr, n = {}, 0
-    for _, t in ipairs(TROPHIES) do
-      if got[t[1]] then n = n + 1 end
-      tr[#tr + 1] = { title = t[2] .. ' · ' .. t[3], checked = got[t[1]] or false, disabled = true }
-    end
-    add({ title = string.format('Trophies %d/%d', n, #TROPHIES), menu = tr })
-  end
-  add({ title = '-' })
-  add({ title = 'VHS…', fn = function() M.vhs() end })
-  add({ title = 'Open ' .. (M.config.tvUrl or ''):gsub('^https?://', ''), fn = function() hs.urlevent.openURL(M.config.tvUrl .. '/') end })
-  return items
-end
-
-M.clubMenu = clubMenu -- for debugging/tests
-
 loadVibe = function()
   if not tvOn() then return end
-  tv('GET', 'vibe?day=' .. os.date('%Y-%m-%d'), nil, function(status, v)
+  tv('GET', 'vibe?day=' .. os.date('%Y-%m-%d'), nil, function(status, v, raw)
     if status ~= 200 or type(v) ~= 'table' or not v.mascot then return end
-    vibe = v
+    vibe, vibeRaw = v, raw
+    panelPush()
     M.vibe = v -- for debugging/tests
     if menu then
       menu:setIcon(fuzzIcon(v.mascot.mood), true)
@@ -669,31 +603,203 @@ end
 M.refresh = function() loadVibe() end
 
 --------------------------------
--- VHS: Plex movies and episodes through craigo.art/tv
+-- The Fuzz panel: a window docked beside the PiP with the clubhouse (CLUB)
+-- and the VHS store (VHS). panel.html draws it; messages come back here.
 --------------------------------
-local vhsChooser = nil
+local panel, panelReady, panelTab = nil, false, 'club'
+local panelSet = nil   -- frame we last docked it to; a different one means it was dragged
+local byKey = {}       -- tape key -> tape, for clicks from the panel
 local shelfCache, shelfAt = nil, 0
+local coverCache = {}
 
-local function clock(sec)
-  sec = math.max(0, math.floor(sec or 0))
-  return string.format('%d:%02d:%02d', sec // 3600, sec // 60 % 60, sec % 60)
-end
+-- One JSON value as JavaScript source.
+local function J(v) return hs.json.encode({ v }):sub(2, -2) end
 
-local function tapeNote(t)
-  local pos = hs.settings.get(posKey(t.key))
-  if pos then return 'HALF WATCHED · AT ' .. clock(pos) end
-  if hs.settings.get(doneKey(t.key)) then return 'SEEN IT ✓' end
-  return t.duration and clock(t.duration) or ''
-end
-
-local function tapeRow(t, prefix)
-  local label = t.title .. (t.year and ' (' .. t.year .. ')' or '')
-  if t.type == 'episode' then
-    label = string.format('S%02dE%02d  %s', t.season or 0, t.episode or 0, t.title)
+local function js(fn, ...)
+  if panel and panelReady then
+    panel:evaluateJavaScript('app.' .. fn .. '(' .. table.concat({ ... }, ',') .. ')')
   end
-  local kind = ({ movie = 'MOVIE', show = 'SHOW', episode = 'EPISODE' })[t.type] or ''
-  local note = t.type == 'show' and '' or tapeNote(t)
-  return { text = (prefix or '') .. label, subText = kind .. (note ~= '' and ' · ' .. note or ''), tape = t }
+end
+
+local function nowText()
+  if tape then return '▶ VHS' end
+  if current and running() then return string.format('▶ CH %02d', current) end
+  return ''
+end
+
+local function trophyTable()
+  local t = {}
+  for i, x in ipairs(TROPHIES) do t[i] = { x[1], x[2], x[3] } end
+  return t
+end
+
+panelPush = function()
+  if not (panel and panelReady and vibeRaw) then return end
+  local n = {}
+  for k, v in pairs(names) do n[tostring(k)] = v end
+  js('vibe', vibeRaw, J(n), J(trophyTable()))
+  js('now', J(nowText()))
+end
+
+local function note(t)
+  t.pos = hs.settings.get(posKey(t.key))
+  t.done = hs.settings.get(doneKey(t.key)) and true or nil
+  byKey[t.key] = t
+  return t
+end
+
+local function pushShelves()
+  local list = {}
+  for i, t in ipairs(shelfCache or {}) do list[i] = note(t) end
+  js('shelves', #list > 0 and J(list) or '[]')
+end
+
+local function loadShelves()
+  -- New arrivals first, then every movie and show.
+  local lists, pending = {}, 3
+  for i, shelf in ipairs({ 'new', 'movies', 'tv' }) do
+    tv('GET', 'vhs/shelf?shelf=' .. shelf, nil, function(status, list)
+      lists[i] = status == 200 and type(list) == 'table' and list or {}
+      pending = pending - 1
+      if pending > 0 then return end
+      local all, seen = {}, {}
+      for j, l in ipairs(lists) do
+        for _, t in ipairs(l) do
+          if not seen[t.key] then
+            seen[t.key] = true
+            t.isNew = j == 1 or nil
+            all[#all + 1] = t
+          end
+        end
+      end
+      shelfCache, shelfAt = all, os.time()
+      pushShelves()
+    end)
+  end
+end
+
+local function fetchCover(id)
+  if coverCache[id] then return js('cover', J(id), J(coverCache[id])) end
+  if not id:match('^%d+/%d+$') then return end
+  hs.http.doAsyncRequest(M.config.tvUrl .. '/api/vhs/cover/' .. id, 'GET', nil, { Cookie = COOKIE },
+    function(status, body, headers)
+      if status ~= 200 or not body then return end
+      local ct = 'image/jpeg'
+      for k, v in pairs(headers or {}) do if k:lower() == 'content-type' then ct = v end end
+      coverCache[id] = 'data:' .. ct .. ';base64,' .. hs.base64.encode(body)
+      js('cover', J(id), J(coverCache[id]))
+    end)
+end
+
+local function openShow(key)
+  tv('GET', 'vhs/tape/' .. key, nil, function(status, t)
+    if status ~= 200 or type(t) ~= 'table' then
+      hs.alert.show('Plex unreachable (HTTP ' .. tostring(status) .. ')')
+      return
+    end
+    t.episodes = t.episodes or {}
+    for _, ep in ipairs(t.episodes) do ep.show = t.title; note(ep) end
+    js('show', J(t))
+  end)
+end
+
+-- Beside the PiP (left of it, bottoms lined up), or in its corner when there's none.
+local W, H = 340, 540
+local function dock()
+  if not panel then return end
+  if panelSet and not panel:frame():equals(panelSet) then return end -- dragged: leave it
+  local st = M.state()
+  local scr = hs.mouse.getCurrentScreen() or hs.screen.mainScreen()
+  local f
+  if st.frame and not hidden and not fullScreen then
+    local pf = hs.geometry.rect(st.frame)
+    scr = hs.screen.find(pf.center) or scr
+    f = hs.geometry.rect(pf.x - W - 8, pf.y + pf.h - H, W, H)
+  else
+    local s = scr:frame()
+    local c = M.config
+    f = hs.geometry.rect(s.x + s.w - W - c.margin, s.y + s.h - H - c.margin, W, H)
+  end
+  local s = scr:frame()
+  f.y = math.max(s.y, f.y)
+  f.x = math.max(s.x, f.x)
+  panel:frame(f)
+  panelSet = panel:frame()
+end
+M.dockPanel = dock
+
+local onMessage -- below
+
+local function makePanel()
+  local uc = hs.webview.usercontent.new('fuzz')
+  uc:setCallback(function(m) onMessage(m.body or {}) end)
+  panel = hs.webview.new({ x = 0, y = 0, w = W, h = H }, { developerExtrasEnabled = false }, uc)
+  panel:windowStyle({ 'titled', 'closable', 'resizable', 'utility', 'HUD' })
+  panel:windowTitle('Fuzz')
+  panel:level(hs.drawing.windowLevels.floating)
+  panel:behaviorAsLabels({ 'canJoinAllSpaces' })
+  panel:allowTextEntry(true)
+  panel:deleteOnClose(false)
+  panel:closeOnEscape(false)
+  local f = io.open(DIR .. '/panel.html'):read('a')
+  local font = io.open(DIR .. '/vt323.woff2', 'rb'):read('a')
+  f = f:gsub('{{FONT}}', function() return hs.base64.encode(font) end)
+  panelReady = false
+  panel:html(f)
+end
+
+local function panelVisible()
+  return panel ~= nil and panel:hswindow() ~= nil and panel:hswindow():isVisible()
+end
+
+-- Open the panel on a tab ('club' or 'vhs'); the same call again closes it.
+function M.panel(tab)
+  if not tvOn() then
+    hs.alert.show('Fuzz needs tvUrl and tvUser (see README)')
+    return
+  end
+  tab = tab or panelTab
+  if panelVisible() and tab == panelTab then
+    panel:hide()
+    return
+  end
+  panelTab = tab
+  if not panel then makePanel() end
+  if not panelVisible() then panelSet = nil end -- re-dock each time it opens
+  dock()
+  panel:show()
+  local w = panel:hswindow()
+  if w then w:focus() end
+  js('tab', J(tab))
+  if shelfCache then pushShelves() end
+  panelPush()
+  loadVibe()
+end
+
+function M.vhs() M.panel('vhs') end
+
+onMessage = function(m)
+  if m.act == 'ready' then
+    panelReady = true
+    js('tab', J(panelTab))
+    panelPush()
+    if shelfCache then pushShelves() end
+  elseif m.act == 'close' then
+    if panel then panel:hide() end
+  elseif m.act == 'shelves' then
+    if shelfCache and os.time() - shelfAt < 600 then pushShelves() else loadShelves() end
+  elseif m.act == 'cover' then
+    fetchCover(tostring(m.cover))
+  elseif m.act == 'show' then
+    openShow(tostring(m.key))
+  elseif m.act == 'tape' then
+    local t = byKey[tostring(m.key)]
+    if t then M.playTape(t) end
+  elseif m.act == 'play' and tonumber(m.channel) then
+    M.play(tonumber(m.channel))
+    js('now', J(nowText()))
+    hs.timer.doAfter(2, dock)
+  end
 end
 
 -- A Plex transcode session id the Worker accepts ([a-z0-9]{8,24}).
@@ -721,97 +827,9 @@ function M.playTape(t)
       start = start,
     })
     hs.alert.show('▶ ' .. (start and 'RESUMING ' or '') .. t.title:upper(), 2)
+    js('now', J(nowText()))
+    hs.timer.doAfter(2, dock)
   end)
-end
-
-local function showEpisodes(show)
-  vhsChooser:placeholderText(show.title .. ' · episode…')
-  vhsChooser:choices({ { text = 'Loading episodes…' } })
-  vhsChooser:query(nil)
-  vhsChooser:show()
-  tv('GET', 'vhs/tape/' .. show.key, nil, function(status, t)
-    if status ~= 200 or type(t) ~= 'table' then
-      vhsChooser:choices({ { text = 'Plex unreachable (HTTP ' .. tostring(status) .. ')' } })
-      return
-    end
-    local rows, next = {}, nil
-    for _, ep in ipairs(t.episodes or {}) do
-      if not next and hs.settings.get(posKey(ep.key)) then next = ep end
-    end
-    for _, ep in ipairs(t.episodes or {}) do
-      if not next and not hs.settings.get(doneKey(ep.key)) then next = ep end
-    end
-    if next then
-      local r = tapeRow(next, '▶ UP NEXT  ')
-      rows[1] = r
-    end
-    for _, ep in ipairs(t.episodes or {}) do
-      ep.show = ep.show or show.title
-      rows[#rows + 1] = tapeRow(ep)
-    end
-    if next then next.show = next.show or show.title end
-    vhsChooser:choices(rows)
-  end)
-end
-
-local function loadShelves()
-  -- New arrivals first, then every movie and show (the chooser filters as you type).
-  local rows, seen, pending = {}, {}, 3
-  local lists = {}
-  local function done()
-    pending = pending - 1
-    if pending > 0 then return end
-    for i, shelf in ipairs({ 'new', 'movies', 'tv' }) do
-      for _, t in ipairs(lists[i] or {}) do
-        if not seen[t.key] then
-          seen[t.key] = true
-          rows[#rows + 1] = tapeRow(t, shelf == 'new' and '★ NEW  ' or nil)
-        end
-      end
-    end
-    if #rows == 0 then rows[1] = { text = 'Plex unreachable' } end
-    shelfCache, shelfAt = rows, os.time()
-    M.vhsRows = rows -- for debugging/tests
-    if vhsChooser:isVisible() then vhsChooser:choices(rows) end
-  end
-  for i, shelf in ipairs({ 'new', 'movies', 'tv' }) do
-    tv('GET', 'vhs/shelf?shelf=' .. shelf, nil, function(status, list)
-      lists[i] = status == 200 and type(list) == 'table' and list or {}
-      done()
-    end)
-  end
-end
-
-function M.vhs()
-  if not tvOn() then
-    hs.alert.show('VHS needs tvUrl and tvUser (see README)')
-    return
-  end
-  if not vhsChooser then
-    vhsChooser = hs.chooser.new(function(row)
-      if not row or not row.tape then return end
-      if row.tape.type == 'show' then
-        hs.timer.doAfter(0.1, function() showEpisodes(row.tape) end)
-      else
-        M.playTape(row.tape)
-      end
-    end)
-    vhsChooser:searchSubText(true)
-  end
-  vhsChooser:placeholderText('CRAIGO VIDEO · movie or show…')
-  vhsChooser:query(nil)
-  if shelfCache then
-    -- Rebuild notes (half watched / seen) from the cached tapes.
-    local rows = {}
-    for i, r in ipairs(shelfCache) do
-      rows[i] = tapeRow(r.tape, r.text:match('^★ NEW  ') and '★ NEW  ' or nil)
-    end
-    vhsChooser:choices(rows)
-  else
-    vhsChooser:choices({ { text = 'Loading the shelves…' } })
-  end
-  vhsChooser:show()
-  if not shelfCache or os.time() - shelfAt > 600 then loadShelves() end
 end
 
 --------------------------------
@@ -932,7 +950,7 @@ function M.setup(opts)
       if c.menubar then
         menu = hs.menubar.new()
         menu:setIcon(fuzzIcon('ok'), true)
-        menu:setMenu(function() loadVibe(); return clubMenu() end)
+        menu:setClickCallback(function() M.panel('club') end)
       end
       loadVibe()
       M.vibeTimer = hs.timer.doEvery(120, loadVibe)

@@ -13,7 +13,7 @@ It's a [Hammerspoon](https://www.hammerspoon.org) module that drives [mpv](https
 | **⌥\\** | Random channel |
 | **⌥9** | Channel list, with what's on each channel right now (type to search) |
 | **⌥0** | Turn it off |
-| **⌥V** | VHS: pick a movie or episode (needs a craigo.art/tv account, see below) |
+| **⌥V** | VHS store in the Fuzz panel (needs a craigo.art/tv account, see below) |
 
 Inside the player you can use mpv's own keys: **m** mutes, **9**/**0** change the volume, **f** goes fullscreen. You can drag the player to move it.
 
@@ -82,9 +82,10 @@ Hammerspoon takes over the keys, so while it runs **⌥[**, **⌥]** and **⌥\\
 
 If you have a [craigo.art/tv](https://craigo.art/tv/) account, the player can count as watching there too:
 
-- **Fuzz in the menu bar.** The mascot's face shows its mood (dancing, fed, peckish, hungry, sad, static) and the number next to it is your streak. Its menu has the clubhouse: who's on now (click a channel to join), friends' streaks, weekly awards, top channels and your trophies.
+- **Fuzz in the menu bar.** The mascot's face shows its mood (dancing, fed, peckish, hungry, sad, static) and the number next to it is your streak. Click it to open the Fuzz panel.
+- **The Fuzz panel** docks beside the player (or in its corner when nothing's playing) and floats over other windows. CLUB has Fuzz (click to pet), your streak, today's minutes, the squad streak, who's on now (click a channel to join), friends, weekly awards, top channels and trophies. Drag it somewhere else and it stays there until you close it. Esc closes it.
 - **Watch time.** Every minute a channel or tape really plays (not paused, loading or hidden), the player tells the site, which feeds your streak, trophies and Fuzz. Stopping the player marks you as not watching.
-- **⌥V opens CRAIGO VIDEO**, the VHS store: new arrivals first, then every movie and show (type to search). Pick a show to choose an episode. Tapes play in the same player, pick up where you stopped, and when one plays to the end you get BE KIND, REWIND. Hiding the player pauses a tape.
+- **⌥V opens the panel's VHS tab**, the CRAIGO VIDEO store: cover art, with shelves for new arrivals, movies, TV and half-watched tapes, and a search box. Pick a show to choose an episode (the next one is marked). Tapes play in the same player, pick up where you stopped, and when one plays to the end you get BE KIND, REWIND. Hiding the player pauses a tape.
 
 Save your craigo.art/tv password in the Keychain:
 
