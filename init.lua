@@ -480,49 +480,59 @@ local function tv(method, path, body, fn)
   if COOKIE then go(true) else login(function(ok) if ok then go(false) else fn(401) end end) end
 end
 
+-- Commands go straight to the receiver's ntfy topic (GET cast hands it out to the logged-in user).
+local castTopic = nil
+local function withTopic(fn)
+  if castTopic then return fn(castTopic) end
+  tv('GET', 'cast', nil, function(status, data)
+    if status == 200 and data and data.topic then castTopic = data.topic; fn(castTopic)
+    else hs.alert.show('Cast: no topic (HTTP ' .. tostring(status) .. ')') end
+  end)
+end
 castCmd = function(cmd, ch)
-  tv('POST', 'cast', { cmd = cmd, ch = ch }, function(status)
-    if status ~= 200 then hs.alert.show('Cast: HTTP ' .. tostring(status)) end
+  withTopic(function(topic)
+    hs.http.asyncPost('https://ntfy.sh/' .. topic, hs.json.encode({ cmd = cmd, ch = ch }), {}, function(status)
+      if status ~= 200 then hs.alert.show('Cast: ntfy HTTP ' .. tostring(status)) end
+    end)
   end)
 end
 
--- Cast to the craigo.art/tv receiver (tvUrl/?cast=1). Pings it first; if no receiver answers,
--- keeps pinging for a minute so opening the page (the iPad's "Tunarr Receiver" shortcut) picks it up.
+-- Cast to the craigo.art/tv receiver (tvUrl/?cast=1). With none open, push castWakeTopic (the iPad's
+-- "Tunarr Receiver" shortcut opens the page) and keep checking for a minute.
 local castTry = nil
 function M.castWeb()
   if not tvOn() then return hs.alert.show('Cast needs tvUrl and tvUser (see README)') end
-  local n = current or last or 1
-  if castTry then castTry:stop() end
+  if castTry then castTry:stop(); castTry = nil end
   local tries = 0
-  local function ping()
+  local function check()
     tries = tries + 1
-    castCmd('ping')
-    hs.timer.doAfter(1.5, function()
-      tv('GET', 'cast/here?since=3', nil, function(status, data)
-        if status == 200 and data and data.here then
-          if castTry then castTry:stop(); castTry = nil end
-          if running() then M.stop() end
-          castWeb = true
-          castCmd('tune', n)
-          hs.alert.show(string.format('Casting CH %02d', n), 2)
-        elseif tries == 1 then
-          local url = M.config.tvUrl .. '/?cast=1'
-          local topic = M.config.castWakeTopic
-          if topic then -- the iPad's "Tunarr Receiver" shortcut opens the page on this push
-            hs.http.asyncPost('https://ntfy.sh/' .. topic, 'Opening the receiver',
-              { Title = 'tunarr cast', Click = url, Priority = 'high' }, function() end)
-            hs.alert.show('Waking the iPad receiver…', 4)
-          else
-            hs.alert.show('No receiver: open ' .. url .. ' on the iPad', 6)
-          end
+    tv('GET', 'cast/here', nil, function(status, data)
+      if castWeb then return end
+      if status == 200 and data and data.here then
+        if castTry then castTry:stop(); castTry = nil end
+        -- What's on here moves over; with nothing on, the receiver keeps its channel.
+        local n = (running() and current) or data.ch or last or 1
+        if running() then M.stop() end
+        castWeb = true
+        castCmd('tune', n)
+        hs.alert.show(string.format('Casting CH %02d', n), 2)
+      elseif tries == 1 then
+        local url = M.config.tvUrl .. '/?cast=1'
+        local topic = M.config.castWakeTopic
+        if topic then
+          hs.http.asyncPost('https://ntfy.sh/' .. topic, 'Opening the receiver',
+            { Title = 'tunarr cast', Click = url, Priority = 'high' }, function() end)
+          hs.alert.show('Waking the iPad receiver…', 4)
+        else
+          hs.alert.show('No receiver: open ' .. url .. ' on the iPad', 6)
         end
-      end)
+        castTry = hs.timer.doEvery(3, function()
+          if castWeb or tries >= 20 then castTry:stop(); castTry = nil else check() end
+        end)
+      end
     end)
   end
-  ping()
-  castTry = hs.timer.doEvery(4, function()
-    if castWeb or tries >= 15 then castTry:stop(); castTry = nil else ping() end
-  end)
+  check()
 end
 function M.casting() return castWeb end
 
