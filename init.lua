@@ -750,8 +750,15 @@ local function makePanel()
   panel:html(f)
 end
 
+-- Key window for typing. Never panel:hswindow(): it scans every app's
+-- windows through Accessibility and can stall Hammerspoon for seconds.
+local function focusPanel()
+  panel:bringToFront(true)
+  hs.focus()
+end
+
 local function panelVisible()
-  return panel ~= nil and panel:hswindow() ~= nil and panel:hswindow():isVisible()
+  return panel ~= nil and panel:isVisible()
 end
 
 -- Open the panel on a tab ('club' or 'vhs'); the same call again closes it.
@@ -770,8 +777,7 @@ function M.panel(tab)
   if not panelVisible() then panelSet = nil end -- re-dock each time it opens
   dock()
   panel:show()
-  local w = panel:hswindow()
-  if w then w:focus() end
+  focusPanel()
   js('tab', J(tab))
   if shelfCache then pushShelves() end
   panelPush()
@@ -785,7 +791,7 @@ local findPending = false
 function M.find()
   if not tvOn() then return false end
   if panelVisible() and panelTab == 'tv' then
-    panel:hswindow():focus()
+    focusPanel()
   else
     M.panel('tv')
   end
@@ -1046,6 +1052,7 @@ function M.setup(opts)
       end
       loadVibe()
       M.vibeTimer = hs.timer.doEvery(120, loadVibe)
+      makePanel() -- hidden and loaded ahead, so opt-9 opens instantly
     else
       hs.alert.show('Tunarr PiP: no Keychain password for craigo-tv ' .. c.tvUser .. ' (see README)', 8)
     end

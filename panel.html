@@ -295,13 +295,16 @@ app.np = (n, text) => { const c = chans.find((x) => x.number === n); if (c) { c.
 app.find = () => { app.tab("tv"); const q = $("cq"); q.value = ""; refilter(); q.focus(); };
 // The search box is ranked by fzf (Lua runs fzf --filter); null = no fzf, match substrings here.
 let fzfOrder = null, fzfSeq = 0, fzfTimer = 0;
+// Each keystroke paints a quick in-order letter match at once, then fzf's ranking replaces it.
 function refilter() {
   clearTimeout(fzfTimer);
+  fzfOrder = null; fzfSeq++;
+  renderChans();
   const q = $("cq").value.trim();
-  if (!q) { fzfOrder = null; renderChans(); return; }
-  fzfTimer = setTimeout(() => send({ act: "filter", seq: ++fzfSeq, q,
-    lines: chans.map((c) => `${c.number}\t${c.name} ${c.np || ""}`) }), 30);
+  if (q) fzfTimer = setTimeout(() => send({ act: "filter", seq: fzfSeq, q,
+    lines: chans.map((c) => `${c.number}\t${c.name} ${c.np || ""}`) }), 0);
 }
+const looseMatch = (q, s) => { let i = 0; for (const ch of s) if (ch === q[i]) i++; return i === q.length; };
 app.filtered = (seq, nums) => { if (seq === fzfSeq) { fzfOrder = nums; renderChans(); } };
 app.current = (n, hidden) => {
   cur = n; renderChans();
@@ -310,7 +313,7 @@ app.current = (n, hidden) => {
 function renderChans() {
   const box = $("chans"), q = $("cq").value.trim().toLowerCase(), keep = $("tv").scrollTop;
   const shown = !q ? chans : fzfOrder ? fzfOrder.map((n) => chans.find((c) => c.number === n)).filter(Boolean)
-    : chans.filter((c) => (c.name + " " + (c.np || "")).toLowerCase().includes(q));
+    : chans.filter((c) => looseMatch(q.replace(/\s+/g, ""), (c.name + " " + (c.np || "")).toLowerCase()));
   box.textContent = "";
   if (!chans.length) { box.append(el("p", "dim", "TUNING…")); return; }
   for (const c of shown) {
