@@ -80,11 +80,11 @@ input:focus { border-color: var(--osd); }
 </header>
 <div id="help" hidden>
   <h3>KEYS</h3>
-  <p>j k · h l &nbsp; move (h l across tapes; h backs out)</p>
+  <p>j k · h l &nbsp; move over anything clickable, any tab (h l across tapes; h backs out)</p>
   <p>gg G · ^d ^u ^f ^b &nbsp; top, bottom, pages</p>
   <p>enter o l &nbsp; play / open</p>
   <p>/ &nbsp; search · esc leaves it · ^n ^p move</p>
-  <p>t c v · H L · gt gT &nbsp; tabs</p>
+  <p>t c v · H L · gt gT &nbsp; tabs · &lt; &gt; &nbsp; VHS shelves</p>
   <p>] [ &nbsp; channel up / down · r random</p>
   <p>space &nbsp; hide / show · = - &nbsp; volume</p>
   <p>p &nbsp; mini player · C &nbsp; cast (1-9 picks) · X &nbsp; off · q esc &nbsp; close</p>
@@ -243,9 +243,16 @@ function sticker(t) {
   if (t.isNew) return el("b", null, "NEW");
   return null;
 }
+const CHIPS = [["all", "ALL"], ["new", "NEW"], ["movie", "MOVIES"], ["show", "TV"], ["half", "HALF WATCHED"]];
+function cycleChip(d) {
+  if (view() !== "shelf") return;
+  const i = CHIPS.findIndex(([k]) => k === shelf);
+  shelf = CHIPS[(i + d + CHIPS.length) % CHIPS.length][0];
+  sel.shelf = 0; renderShelf(); markSel(true);
+}
 function renderChips() {
   const c = $("chips"); c.textContent = "";
-  for (const [k, l] of [["all", "ALL"], ["new", "NEW"], ["movie", "MOVIES"], ["show", "TV"], ["half", "HALF WATCHED"]]) {
+  for (const [k, l] of CHIPS) {
     const b = el("button", shelf === k ? "on" : "", l);
     b.onclick = () => { shelf = k; renderShelf(); };
     c.append(b);
@@ -363,6 +370,7 @@ function toggleCast(open = !castOpen()) {
     box.append(p);
   });
   box.hidden = !open || !casts.length;
+  sel.cast = 0; markSel(true);
 }
 $("castBtn").onclick = () => toggleCast();
 for (const b of document.querySelectorAll("[data-cmd]")) b.onclick = () => send({ act: "remote", cmd: b.dataset.cmd });
@@ -374,11 +382,15 @@ $("keys").onclick = () => { $("help").hidden = !$("help").hidden; };
 // Normal mode unless a search box has focus. j/k/h/l move the cursor (h/l
 // across the VHS grid, h backs out of a show), Enter/o picks, / searches,
 // t/c/v switch tabs, the PiP keys work as letters, ? shows them all.
-const view = () => !$("tv").hidden ? "tv" : !$("vhs").hidden ? ($("showView").hidden ? "shelf" : "eps") : "club";
-const pane = () => $(view() === "tv" ? "tv" : view() === "club" ? "club" : "vhs");
-const items = () => [...document.querySelectorAll({ tv: "#chans p", shelf: "#shelf .tape", eps: ".eps p" }[view()] || "none")];
+const view = () => !$("tv").hidden ? (castOpen() ? "cast" : "tv") : !$("vhs").hidden ? ($("showView").hidden ? "shelf" : "eps") : "club";
+const pane = () => $(curTab());
+// Every clickable thing in each view, in reading order; j/k move the cursor over them, enter/o/l clicks.
+// Club: Fuzz (pet him), who's on now (join), the week's top channels.
+const items = () => [...document.querySelectorAll({ tv: "#chans p", cast: "#castList p", shelf: "#shelf .tape",
+  eps: ".eps p", club: "#club .fuzz, #club .link" }[view()] || "none")];
 const cols = () => view() === "shelf" ? 3 : 1;
-const sel = { tv: 0, shelf: 0, eps: 0 };
+const sel = { tv: 0, cast: 0, shelf: 0, eps: 0, club: 0 };
+const edge = (end) => { if (!items().length) pane().scrollTop = end ? 1e9 : 0; else { sel[view()] = end ? 1e9 : 0; markSel(true); } };
 function markSel(scroll) {
   const v = view(), list = items();
   document.querySelectorAll(".sel").forEach((n) => n.classList.remove("sel"));
@@ -389,7 +401,7 @@ function markSel(scroll) {
 }
 function move(d) {
   const v = view();
-  if (v === "club") { pane().scrollBy(0, d * 40); return; }
+  if (!items().length) { pane().scrollBy(0, d * 40); return; }
   sel[v] += d;
   markSel(true);
 }
@@ -406,9 +418,11 @@ const KEYS = {
   l: () => cols() > 1 ? move(1) : pick(), h: () => cols() > 1 ? move(-1) : back(),
   ArrowDown: () => move(cols()), ArrowUp: () => move(-cols()),
   ArrowRight: () => cols() > 1 ? move(1) : pick(), ArrowLeft: () => cols() > 1 ? move(-1) : back(),
-  G: () => { if (view() === "club") pane().scrollTop = 1e9; else { sel[view()] = 1e9; markSel(true); } },
+  G: () => edge(true),
+  // VHS shelf chips (ALL / NEW / MOVIES / TV / HALF WATCHED)
+  ">": () => cycleChip(1), "<": () => cycleChip(-1),
   Enter: pick, o: pick, Backspace: back, "-": () => remote("voldown"),
-  "/": () => { const q = view() === "tv" ? $("cq") : view() === "club" ? null : $("q"); if (q) { q.focus(); q.select(); } },
+  "/": () => { const q = curTab() === "tv" ? $("cq") : curTab() === "vhs" ? $("q") : null; if (q) { if (castOpen()) toggleCast(false); q.focus(); q.select(); } },
   t: () => switchTab("tv"), c: () => switchTab("club"), v: () => switchTab("vhs"),
   H: () => switchTab(TABS[(TABS.indexOf(curTab()) + 2) % 3]), L: () => switchTab(TABS[(TABS.indexOf(curTab()) + 1) % 3]),
   "]": () => remote("up"), "[": () => remote("down"), r: () => remote("random"), " ": () => remote("toggle"),
@@ -451,7 +465,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (pending === "g") {
     pending = "";
-    if (e.key === "g") { if (view() === "club") pane().scrollTop = 0; else { sel[view()] = 0; markSel(true); } }
+    if (e.key === "g") edge(false)
     else if (e.key === "t") KEYS.L();
     else if (e.key === "T") KEYS.H();
     e.preventDefault();
