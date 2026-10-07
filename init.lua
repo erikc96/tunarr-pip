@@ -69,6 +69,12 @@ local TVPW, COOKIE -- craigo.art/tv password and session cookie
 local castWeb, castCmd = false, nil
 
 local task = nil       -- running mpv hs.task
+-- A receiver playing on its own (started on the iPad), from cast/receivers. With nothing playing
+-- here, the keys and the finder take it over (attach).
+local activeRx = nil
+local function attach()
+  if not castWeb and activeRx and not (task and task:isRunning()) then castWeb = activeRx end
+end
 local current = nil    -- channel number it's playing
 local last = nil       -- last channel played, for channel up/down after a stop
 local numbers = {}     -- sorted channel numbers, for up/down/random
@@ -133,7 +139,8 @@ end
 local endTape, unbeat -- defined with the club below
 
 function M.stop()
-  if castWeb then castCmd('off'); castWeb = false; return end
+  attach()
+  if castWeb then castCmd('off'); castWeb = false; activeRx = nil; return end
   cancelCool()
   endTape()
   unbeat()
@@ -292,6 +299,7 @@ end
 
 function M.play(n)
   last = n
+  attach()
   if castWeb then return castCmd('tune', n) end
   if not running() then
     start(chanSrc(n))
@@ -332,6 +340,7 @@ end
 -- Next channel after `from` in direction dir (+1/-1), wrapping; `from` may be
 -- a number that no longer exists.
 function M.step(dir)
+  attach()
   if castWeb then return castCmd(dir > 0 and 'up' or 'down') end
   withNumbers(function()
     local from = current or last
@@ -352,6 +361,7 @@ function M.step(dir)
 end
 
 function M.random()
+  attach()
   if castWeb then return castCmd('random') end
   withNumbers(function()
     local pool = {}
@@ -537,6 +547,21 @@ function M.castWeb(rx, wakeTopic)
   check()
 end
 function M.casting() return castWeb end
+
+-- Which receivers are open and playing; called every 15 s and when the finder opens.
+function M.refreshReceivers()
+  if not tvOn() then return end
+  tv('GET', 'cast/receivers', nil, function(status, rows)
+    if status ~= 200 or type(rows) ~= 'table' then return end
+    local found, open = nil, false
+    for _, r in ipairs(rows) do
+      if r.name == castWeb then found, open = castWeb, true; break end -- still there
+      if not found and type(r.ch) == 'number' then found = r.name end
+    end
+    if castWeb and not open then castWeb = false end -- its page was closed
+    activeRx = found
+  end)
+end
 
 local vibe, vibeRaw = nil, nil
 local menu = nil
@@ -858,6 +883,7 @@ function M.vhs() M.panel('vhs') end
 local findPending = false
 function M.find()
   if not tvOn() then return false end
+  M.refreshReceivers()
   if panelVisible() and panelTab == 'tv' then
     panel:hide()
     return true
@@ -1072,6 +1098,7 @@ end
 
 -- Change volume by delta (mpv shows the level on the player).
 function M.volume(delta)
+  attach()
   if castWeb then return castCmd(delta > 0 and 'volup' or 'voldown') end
   ipc({ 'osd-msg-bar', 'add', 'volume', delta })
 end
@@ -1135,6 +1162,8 @@ function M.setup(opts)
       loadVibe()
       M.vibeTimer = hs.timer.doEvery(120, loadVibe)
       makePanel() -- hidden and loaded ahead, so opt-9 opens instantly
+      M.refreshReceivers()
+      M.receiverTimer = hs.timer.doEvery(15, M.refreshReceivers)
     else
       hs.alert.show('Tunarr PiP: no Keychain password for craigo-tv ' .. c.tvUser .. ' (see README)', 8)
     end
