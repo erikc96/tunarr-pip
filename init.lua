@@ -55,7 +55,6 @@ M.config = {
   tvUser = nil,    -- its login; password in the Keychain (service 'craigo-tv')
   vhsKey = { { 'alt', 'shift' }, 'v' }, -- opt-shift-v (another app often owns opt-v)
   menubar = true,  -- Fuzz in the menu bar (needs tvUrl)
-  castWakeTopic = nil, -- ntfy.sh topic: castWeb() with no receiver pushes "tunarr cast" there (see README)
   cast = {},       -- the panel's CAST list: { { name = 'IPAD', run = function() ... end }, ... }
 }
 
@@ -64,8 +63,9 @@ local DIR = debug.getinfo(1, 'S').source:match('^@(.*)/') -- this repo's folder
 
 local AUTH, HEADERS -- set by setup()
 local TVPW, COOKIE -- craigo.art/tv password and session cookie
--- Casting to a craigo.art/tv receiver page (?cast=1, e.g. the iPad): while on, the channel,
--- volume and off keys drive that page instead of mpv. castCmd is set once tv() exists.
+-- Casting to a craigo.art/tv receiver page (?cast=<name>, e.g. an iPad): while castWeb holds the
+-- receiver's name, the channel, volume and off keys drive that page instead of mpv. castCmd is set
+-- once tv() exists.
 local castWeb, castCmd = false, nil
 
 local task = nil       -- running mpv hs.task
@@ -133,7 +133,7 @@ end
 local endTape, unbeat -- defined with the club below
 
 function M.stop()
-  if castWeb then castWeb = false; castCmd('off'); return end
+  if castWeb then castCmd('off'); castWeb = false; return end
   cancelCool()
   endTape()
   unbeat()
@@ -480,54 +480,56 @@ local function tv(method, path, body, fn)
   if COOKIE then go(true) else login(function(ok) if ok then go(false) else fn(401) end end) end
 end
 
--- Commands go straight to the receiver's ntfy topic (GET cast hands it out to the logged-in user).
-local castTopic = nil
-local function withTopic(fn)
-  if castTopic then return fn(castTopic) end
-  tv('GET', 'cast', nil, function(status, data)
-    if status == 200 and data and data.topic then castTopic = data.topic; fn(castTopic)
+-- Commands go straight to the receiver's ntfy topic (GET cast?rx= hands it to the logged-in user).
+local castTopics = {}
+local function withTopic(rx, fn)
+  if castTopics[rx] then return fn(castTopics[rx]) end
+  tv('GET', 'cast?rx=' .. rx, nil, function(status, data)
+    if status == 200 and data and data.topic then castTopics[rx] = data.topic; fn(data.topic)
     else hs.alert.show('Cast: no topic (HTTP ' .. tostring(status) .. ')') end
   end)
 end
 castCmd = function(cmd, ch)
-  withTopic(function(topic)
+  if not castWeb then return end
+  withTopic(castWeb, function(topic)
     hs.http.asyncPost('https://ntfy.sh/' .. topic, hs.json.encode({ cmd = cmd, ch = ch }), {}, function(status)
       if status ~= 200 then hs.alert.show('Cast: ntfy HTTP ' .. tostring(status)) end
     end)
   end)
 end
 
--- Cast to the craigo.art/tv receiver (tvUrl/?cast=1). With none open, push castWakeTopic (the iPad's
--- "Tunarr Receiver" shortcut opens the page) and keep checking for a minute.
+-- Cast to the craigo.art/tv receiver named rx (tvUrl/?cast=<rx>; default 'ipad'). With none open,
+-- push wakeTopic (that device's "Tunarr Receiver" shortcut opens the page) and keep checking for a minute.
 local castTry = nil
-function M.castWeb()
+function M.castWeb(rx, wakeTopic)
   if not tvOn() then return hs.alert.show('Cast needs tvUrl and tvUser (see README)') end
+  rx = rx or 'ipad'
   if castTry then castTry:stop(); castTry = nil end
   local tries = 0
   local function check()
     tries = tries + 1
-    tv('GET', 'cast/here', nil, function(status, data)
-      if castWeb then return end
+    tv('GET', 'cast/here?rx=' .. rx, nil, function(status, data)
+      if castWeb == rx then return end
       if status == 200 and data and data.here then
         if castTry then castTry:stop(); castTry = nil end
         -- What's on here moves over; with nothing on, the receiver keeps its channel.
         local n = (running() and current) or data.ch or last or 1
         if running() then M.stop() end
-        castWeb = true
+        if castWeb then castCmd('off') end -- leaving another receiver
+        castWeb = rx
         castCmd('tune', n)
-        hs.alert.show(string.format('Casting CH %02d', n), 2)
+        hs.alert.show(string.format('Casting CH %02d to %s', n, rx:upper()), 2)
       elseif tries == 1 then
-        local url = M.config.tvUrl .. '/?cast=1'
-        local topic = M.config.castWakeTopic
-        if topic then
-          hs.http.asyncPost('https://ntfy.sh/' .. topic, 'Opening the receiver',
+        local url = M.config.tvUrl .. '/?cast=' .. rx
+        if wakeTopic then
+          hs.http.asyncPost('https://ntfy.sh/' .. wakeTopic, 'Opening the receiver',
             { Title = 'tunarr cast', Click = url, Priority = 'high' }, function() end)
-          hs.alert.show('Waking the iPad receiver…', 4)
+          hs.alert.show('Waking ' .. rx:upper() .. '…', 4)
         else
-          hs.alert.show('No receiver: open ' .. url .. ' on the iPad', 6)
+          hs.alert.show('No receiver: open ' .. url, 6)
         end
         castTry = hs.timer.doEvery(3, function()
-          if castWeb or tries >= 20 then castTry:stop(); castTry = nil else check() end
+          if castWeb == rx or tries >= 20 then castTry:stop(); castTry = nil else check() end
         end)
       end
     end)
@@ -1037,7 +1039,7 @@ end
 -- the one playing, else the last, else the first), moving it back from
 -- playOn's full screen if needed.
 function M.pip(n)
-  if castWeb then castWeb = false; castCmd('off') end
+  if castWeb then castCmd('off'); castWeb = false end
   local keep = n == nil and tape ~= nil and running() -- move the tape, don't change it
   withNumbers(function()
     n = n or current or last or numbers[1] or 1
