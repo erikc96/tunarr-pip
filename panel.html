@@ -290,17 +290,30 @@ app.show = (t) => {
 // ---- TV remote ----
 let chans = [], cur = null;
 app.channels = (list, current) => { chans = Array.isArray(list) ? list : []; cur = current; renderChans(); };
-app.np = (n, text) => { const c = chans.find((x) => x.number === n); if (c) { c.np = text; renderChans(); } };
+app.np = (n, text) => { const c = chans.find((x) => x.number === n); if (c) { c.np = text; renderChans(); refilter(); } };
+// opt-9: the TV tab with an empty, focused search box.
+app.find = () => { app.tab("tv"); const q = $("cq"); q.value = ""; refilter(); q.focus(); };
+// The search box is ranked by fzf (Lua runs fzf --filter); null = no fzf, match substrings here.
+let fzfOrder = null, fzfSeq = 0, fzfTimer = 0;
+function refilter() {
+  clearTimeout(fzfTimer);
+  const q = $("cq").value.trim();
+  if (!q) { fzfOrder = null; renderChans(); return; }
+  fzfTimer = setTimeout(() => send({ act: "filter", seq: ++fzfSeq, q,
+    lines: chans.map((c) => `${c.number}\t${c.name} ${c.np || ""}`) }), 30);
+}
+app.filtered = (seq, nums) => { if (seq === fzfSeq) { fzfOrder = nums; renderChans(); } };
 app.current = (n, hidden) => {
   cur = n; renderChans();
   document.querySelector('[data-cmd="toggle"]').textContent = hidden ? "SHOW" : "HIDE";
 };
 function renderChans() {
   const box = $("chans"), q = $("cq").value.trim().toLowerCase(), keep = $("tv").scrollTop;
+  const shown = !q ? chans : fzfOrder ? fzfOrder.map((n) => chans.find((c) => c.number === n)).filter(Boolean)
+    : chans.filter((c) => (c.name + " " + (c.np || "")).toLowerCase().includes(q));
   box.textContent = "";
   if (!chans.length) { box.append(el("p", "dim", "TUNING…")); return; }
-  for (const c of chans) {
-    if (q && !(c.name + " " + (c.np || "")).toLowerCase().includes(q)) continue;
+  for (const c of shown) {
     const p = el("p", c.number === cur ? "on" : "", `${c.number === cur ? "▶ " : ""}${pad(c.number)}  ${c.name.toUpperCase()}`);
     p.append(el("span", "dim", c.np || "…"));
     p.onclick = () => send({ act: "play", channel: c.number });
@@ -308,7 +321,7 @@ function renderChans() {
   }
   $("tv").scrollTop = keep;
 }
-$("cq").addEventListener("input", renderChans);
+$("cq").addEventListener("input", refilter);
 for (const b of document.querySelectorAll("[data-cmd]")) b.onclick = () => send({ act: "remote", cmd: b.dataset.cmd });
 
 for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => switchTab(b.dataset.tab);
@@ -367,7 +380,7 @@ document.addEventListener("keydown", (e) => {
     else if (typing) e.target.blur();                    // back to normal mode, keep the filter
     else if (view() === "eps") back();
     else if (view() === "shelf" && $("q").value) { $("q").value = ""; renderShelf(); markSel(true); }
-    else if (view() === "tv" && $("cq").value) { $("cq").value = ""; renderChans(); markSel(true); }
+    else if (view() === "tv" && $("cq").value) { $("cq").value = ""; refilter(); markSel(true); }
     else send({ act: "close" });
     return;
   }

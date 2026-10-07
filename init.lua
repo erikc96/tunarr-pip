@@ -3,7 +3,8 @@
 --
 -- opt-1 … opt-8  play that channel in a floating mini player; pressing the
 --                key for the channel already showing hides/shows it
--- opt-9          channel picker (every channel + what's on now)
+-- opt-9          find a channel: the Fuzz panel's TV tab with its search box
+--                focused, filtered by fzf (a plain picker without tvUrl)
 -- opt-0          stop and drop the stream
 -- opt-] / opt-[  channel up / down (wraps)
 -- opt-\         random channel
@@ -49,6 +50,7 @@ M.config = {
   margin = 16,  -- from the screen's bottom-right corner (clear of the Dock)
   warmMinutes = 15,
   mpv = nil,       -- default: Homebrew's mpv (Apple silicon or Intel)
+  fzf = nil,       -- default: Homebrew's fzf; ranks the panel's channel search
   tvUrl = nil,     -- craigo.art/tv style site, e.g. 'https://craigo.art/tv'; enables the club and VHS
   tvUser = nil,    -- its login; password in the Keychain (service 'craigo-tv')
   vhsKey = { { 'alt', 'shift' }, 'v' }, -- opt-shift-v (another app often owns opt-v)
@@ -398,9 +400,8 @@ local function loadPickerRows()
   end)
 end
 
-function M.pickerVisible() return chooser ~= nil and chooser:isVisible() end
-
 function M.pick()
+  if M.find() then return end
   if not chooser then
     chooser = hs.chooser.new(function(choice)
       if choice and choice.number and choice.number >= 0 then
@@ -779,6 +780,40 @@ end
 
 function M.vhs() M.panel('vhs') end
 
+-- opt-9: the TV tab with "find a channel" focused. False without tvUrl.
+local findPending = false
+function M.find()
+  if not tvOn() then return false end
+  if panelVisible() and panelTab == 'tv' then
+    panel:hswindow():focus()
+  else
+    M.panel('tv')
+  end
+  findPending = not panelReady -- a new panel focuses it once it's ready
+  js('find')
+  return true
+end
+
+function M.pickerVisible()
+  return (chooser ~= nil and chooser:isVisible()) or (panelVisible() and panelTab == 'tv')
+end
+
+-- Rank channel lines ("<number>\t<name> <what's on>") with fzf --filter and
+-- send the matching numbers back best first; null means filter in the page.
+local function fzfFilter(seq, q, lines)
+  local fzf = M.config.fzf
+  if not fzf or type(lines) ~= 'table' then return js('filtered', J(seq), 'null') end
+  local input = {}
+  for i, l in ipairs(lines) do input[i] = tostring(l):gsub('[\r\n]', ' ') end
+  -- Lines go in as an argument: hs.task's setInput+closeInput loses them.
+  hs.task.new('/bin/sh', function(_, out)
+    local nums = {}
+    for line in (out or ''):gmatch('[^\n]+') do nums[#nums + 1] = tonumber(line:match('^(%d+)')) end
+    js('filtered', J(seq), #nums > 0 and J(nums) or '[]')
+  end, { '-c', 'printf "%s\\n" "$1" | "$0" --filter="$2" --delimiter="\t"',
+    fzf, table.concat(input, '\n'), tostring(q) }):start()
+end
+
 -- The TV tab: every channel with what's on now, as the opt-9 picker shows it.
 local function pushChannels()
   hs.http.asyncGet(M.config.baseUrl .. '/api/channels', HEADERS, function(status, body)
@@ -822,6 +857,7 @@ onMessage = function(m)
   if m.act == 'ready' then
     panelReady = true
     js('tab', J(panelTab))
+    if findPending then findPending = false; js('find') end
     panelPush()
     if shelfCache then pushShelves() end
   elseif m.act == 'tab' and (m.tab == 'tv' or m.tab == 'club' or m.tab == 'vhs') then
@@ -841,6 +877,8 @@ onMessage = function(m)
     M.play(tonumber(m.channel))
     syncRemote()
     hs.timer.doAfter(2, dock)
+  elseif m.act == 'filter' then
+    fzfFilter(m.seq, m.q, m.lines)
   elseif m.act == 'channels' then
     pushChannels()
     syncRemote()
@@ -962,6 +1000,8 @@ function M.setup(opts)
   assert(c.baseUrl and c.user, 'tunarr_pip.setup: set baseUrl and user')
   c.baseUrl = c.baseUrl:gsub('/+$', '')
   c.mpv = c.mpv or (hs.fs.attributes('/opt/homebrew/bin/mpv') and '/opt/homebrew/bin/mpv' or '/usr/local/bin/mpv')
+  c.fzf = c.fzf or (hs.fs.attributes('/opt/homebrew/bin/fzf') and '/opt/homebrew/bin/fzf')
+    or (hs.fs.attributes('/usr/local/bin/fzf') and '/usr/local/bin/fzf') or nil
 
   local pw, ok = hs.execute(string.format(
     "/usr/bin/security find-generic-password -s tunarr-pip -a '%s' -w", c.user))

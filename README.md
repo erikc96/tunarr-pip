@@ -11,7 +11,7 @@ It's a [Hammerspoon](https://www.hammerspoon.org) module that drives [mpv](https
 | **⌥1** … **⌥8** | Play channel 1–8. Press the same key again to hide the player, and again to bring it back |
 | **⌥]** / **⌥[** | Channel up / down (goes back to the start after the last channel) |
 | **⌥\\** | Random channel |
-| **⌥9** | Channel list, with what's on each channel right now (type to search) |
+| **⌥9** | Find a channel: type to search (ranked by fzf) the list of channels and what's on each right now. With a craigo.art/tv account it opens in the Fuzz panel's TV tab |
 | **⌥0** | Turn it off |
 | **⌥⇧V** | VHS store in the Fuzz panel (needs a craigo.art/tv account, see below) |
 
@@ -27,7 +27,7 @@ You need a Mac, [Homebrew](https://brew.sh), and a Tunarr address, username and 
 
 ```sh
 brew install --cask hammerspoon
-brew install mpv
+brew install mpv fzf
 ```
 
 **2. Start Hammerspoon.** Open it from Applications. When it asks, give it Accessibility access (System Settings → Privacy & Security → Accessibility). This is what lets it respond to the keys. In its preferences, tick **Launch Hammerspoon at login**.
