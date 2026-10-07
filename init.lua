@@ -786,15 +786,15 @@ end
 
 function M.vhs() M.panel('vhs') end
 
--- opt-9: the TV tab with "find a channel" focused. False without tvUrl.
+-- opt-9: the TV tab with "find a channel" focused; again hides it. False without tvUrl.
 local findPending = false
 function M.find()
   if not tvOn() then return false end
   if panelVisible() and panelTab == 'tv' then
-    focusPanel()
-  else
-    M.panel('tv')
+    panel:hide()
+    return true
   end
+  M.panel('tv')
   findPending = not panelReady -- a new panel focuses it once it's ready
   js('find')
   return true
