@@ -292,35 +292,57 @@ app.show = (t) => {
 
 // ---- TV remote ----
 let chans = [], cur = null;
-app.channels = (list, current) => { chans = Array.isArray(list) ? list : []; cur = current; renderChans(); };
-app.np = (n, text) => { const c = chans.find((x) => x.number === n); if (c) { c.np = text; renderChans(); refilter(); } };
+// A fresh list keeps the what's-on text it already had; same channels = no re-render.
+app.channels = (list, current) => {
+  list = Array.isArray(list) ? list : [];
+  const old = new Map(chans.map((c) => [c.number, c.np]));
+  for (const c of list) c.np = old.get(c.number);
+  const same = list.length === chans.length && list.every((c, i) => c.number === chans[i].number && c.name === chans[i].name);
+  chans = list;
+  if (!same || current !== cur) { cur = current; renderChans(); }
+};
+// What's on changes only its own line, in place.
+app.np = (n, text) => {
+  const c = chans.find((x) => x.number === n);
+  if (!c || c.np === text) return;
+  c.np = text;
+  const d = document.querySelector(`#chans p[data-n="${n}"] .dim`);
+  if (d) d.textContent = text || "…";
+};
 // opt-9: the TV tab with an empty, focused search box.
 app.find = () => { app.tab("tv"); const q = $("cq"); q.value = ""; refilter(); q.focus(); };
-// The search box is ranked by fzf (Lua runs fzf --filter); null = no fzf, match substrings here.
-let fzfOrder = null, fzfSeq = 0, fzfTimer = 0;
-// Each keystroke paints a quick in-order letter match at once, then fzf's ranking replaces it.
+// The search box is ranked by fzf (Lua runs fzf --filter). The list stays as it is until
+// fzf answers (~10 ms), so it never reorders twice. null from Lua = no fzf: match here.
+let fzfOrder = null, fzfSeq = 0, noFzf = false;
 function refilter() {
-  clearTimeout(fzfTimer);
-  fzfOrder = null; fzfSeq++;
-  renderChans();
   const q = $("cq").value.trim();
-  if (q) fzfTimer = setTimeout(() => send({ act: "filter", seq: fzfSeq, q,
-    lines: chans.map((c) => `${c.number}\t${c.name} ${c.np || ""}`) }), 0);
+  fzfSeq++;
+  if (!q || noFzf) { fzfOrder = null; renderChans(); return; }
+  send({ act: "filter", seq: fzfSeq, q, lines: chans.map((c) => `${c.number}\t${c.name} ${c.np || ""}`) });
 }
 const looseMatch = (q, s) => { let i = 0; for (const ch of s) if (ch === q[i]) i++; return i === q.length; };
-app.filtered = (seq, nums) => { if (seq === fzfSeq) { fzfOrder = nums; renderChans(); } };
+app.filtered = (seq, nums) => {
+  if (seq !== fzfSeq) return;
+  if (nums === null) noFzf = true;
+  fzfOrder = nums; renderChans();
+};
 app.current = (n, hidden) => {
-  cur = n; renderChans();
+  if (n !== cur) { cur = n; renderChans(); }
   document.querySelector('[data-cmd="toggle"]').textContent = hidden ? "SHOW" : "HIDE";
 };
+function shownChans() {
+  const q = $("cq").value.trim().toLowerCase();
+  if (!q) return chans;
+  if (fzfOrder) return fzfOrder.map((n) => chans.find((c) => c.number === n)).filter(Boolean);
+  return chans.filter((c) => looseMatch(q.replace(/\s+/g, ""), (c.name + " " + (c.np || "")).toLowerCase()));
+}
 function renderChans() {
-  const box = $("chans"), q = $("cq").value.trim().toLowerCase(), keep = $("tv").scrollTop;
-  const shown = !q ? chans : fzfOrder ? fzfOrder.map((n) => chans.find((c) => c.number === n)).filter(Boolean)
-    : chans.filter((c) => looseMatch(q.replace(/\s+/g, ""), (c.name + " " + (c.np || "")).toLowerCase()));
+  const box = $("chans"), keep = $("tv").scrollTop;
   box.textContent = "";
   if (!chans.length) { box.append(el("p", "dim", "TUNING…")); return; }
-  for (const c of shown) {
+  for (const c of shownChans()) {
     const p = el("p", c.number === cur ? "on" : "", `${c.number === cur ? "▶ " : ""}${pad(c.number)}  ${c.name.toUpperCase()}`);
+    p.dataset.n = c.number;
     p.append(el("span", "dim", c.np || "…"));
     p.onclick = () => send({ act: "play", channel: c.number });
     box.append(p);
@@ -409,7 +431,11 @@ document.addEventListener("keydown", (e) => {
   }
   if (typing) {
     // Enter or ctrl-n/p from the search box: leave it and move or pick.
-    if (e.key === "Enter") { e.preventDefault(); e.target.blur(); sel[view()] = 0; markSel(true); pick(); }
+    // Enter in "find a channel" plays the highlighted row and closes the finder.
+    if (e.key === "Enter") {
+      e.preventDefault(); e.target.blur(); markSel(true); pick();
+      if (e.target.id === "cq" && items().length) send({ act: "close" });
+    }
     else if (e.ctrlKey && (e.key === "n" || e.key === "j")) { e.preventDefault(); move(cols()); }
     else if (e.ctrlKey && (e.key === "p" || e.key === "k")) { e.preventDefault(); move(-cols()); }
     return;

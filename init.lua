@@ -884,7 +884,13 @@ onMessage = function(m)
     local t = byKey[tostring(m.key)]
     if t then M.playTape(t) end
   elseif m.act == 'play' and tonumber(m.channel) then
-    M.play(tonumber(m.channel))
+    local n = tonumber(m.channel)
+    -- Picking the channel already on shows it; M.play would toggle it hidden.
+    if n == current and running() then
+      if hidden then show() end
+    else
+      M.play(n)
+    end
     syncRemote()
     hs.timer.doAfter(2, dock)
   elseif m.act == 'cast' and M.config.cast[tonumber(m.i)] then
