@@ -75,6 +75,8 @@ tunarrPip = require('tunarr_pip').setup({
   warmMinutes = 5,             -- how long a hidden player stays connected
   -- CAST in the Fuzz panel's TV tab (or C there): where else to play
   cast = { { name = 'TV', run = function() tunarrPip.playOn('LG TV') end } },
+  -- or a browser receiver: tvUrl/?cast=1 open on another device, cast = { { name = 'IPAD', run = function() tunarrPip.castWeb() end } }
+  castWakeTopic = nil,         -- ntfy topic pushed ("tunarr cast") when no receiver answers
 })
 ```
 

@@ -55,6 +55,7 @@ M.config = {
   tvUser = nil,    -- its login; password in the Keychain (service 'craigo-tv')
   vhsKey = { { 'alt', 'shift' }, 'v' }, -- opt-shift-v (another app often owns opt-v)
   menubar = true,  -- Fuzz in the menu bar (needs tvUrl)
+  castWakeTopic = nil, -- ntfy.sh topic: castWeb() with no receiver pushes "tunarr cast" there (see README)
   cast = {},       -- the panel's CAST list: { { name = 'IPAD', run = function() ... end }, ... }
 }
 
@@ -63,6 +64,9 @@ local DIR = debug.getinfo(1, 'S').source:match('^@(.*)/') -- this repo's folder
 
 local AUTH, HEADERS -- set by setup()
 local TVPW, COOKIE -- craigo.art/tv password and session cookie
+-- Casting to a craigo.art/tv receiver page (?cast=1, e.g. the iPad): while on, the channel,
+-- volume and off keys drive that page instead of mpv. castCmd is set once tv() exists.
+local castWeb, castCmd = false, nil
 
 local task = nil       -- running mpv hs.task
 local current = nil    -- channel number it's playing
@@ -129,6 +133,7 @@ end
 local endTape, unbeat -- defined with the club below
 
 function M.stop()
+  if castWeb then castWeb = false; castCmd('off'); return end
   cancelCool()
   endTape()
   unbeat()
@@ -287,6 +292,7 @@ end
 
 function M.play(n)
   last = n
+  if castWeb then return castCmd('tune', n) end
   if not running() then
     start(chanSrc(n))
   elseif current ~= n then
@@ -326,6 +332,7 @@ end
 -- Next channel after `from` in direction dir (+1/-1), wrapping; `from` may be
 -- a number that no longer exists.
 function M.step(dir)
+  if castWeb then return castCmd(dir > 0 and 'up' or 'down') end
   withNumbers(function()
     local from = current or last
     local k = #numbers
@@ -345,6 +352,7 @@ function M.step(dir)
 end
 
 function M.random()
+  if castWeb then return castCmd('random') end
   withNumbers(function()
     local pool = {}
     for _, n in ipairs(numbers) do
@@ -471,6 +479,52 @@ local function tv(method, path, body, fn)
   end
   if COOKIE then go(true) else login(function(ok) if ok then go(false) else fn(401) end end) end
 end
+
+castCmd = function(cmd, ch)
+  tv('POST', 'cast', { cmd = cmd, ch = ch }, function(status)
+    if status ~= 200 then hs.alert.show('Cast: HTTP ' .. tostring(status)) end
+  end)
+end
+
+-- Cast to the craigo.art/tv receiver (tvUrl/?cast=1). Pings it first; if no receiver answers,
+-- keeps pinging for a minute so opening the page (the iPad's "Tunarr Receiver" shortcut) picks it up.
+local castTry = nil
+function M.castWeb()
+  if not tvOn() then return hs.alert.show('Cast needs tvUrl and tvUser (see README)') end
+  local n = current or last or 1
+  if castTry then castTry:stop() end
+  local tries = 0
+  local function ping()
+    tries = tries + 1
+    castCmd('ping')
+    hs.timer.doAfter(1.5, function()
+      tv('GET', 'cast/here?since=3', nil, function(status, data)
+        if status == 200 and data and data.here then
+          if castTry then castTry:stop(); castTry = nil end
+          if running() then M.stop() end
+          castWeb = true
+          castCmd('tune', n)
+          hs.alert.show(string.format('Casting CH %02d', n), 2)
+        elseif tries == 1 then
+          local url = M.config.tvUrl .. '/?cast=1'
+          local topic = M.config.castWakeTopic
+          if topic then -- the iPad's "Tunarr Receiver" shortcut opens the page on this push
+            hs.http.asyncPost('https://ntfy.sh/' .. topic, 'Opening the receiver',
+              { Title = 'tunarr cast', Click = url, Priority = 'high' }, function() end)
+            hs.alert.show('Waking the iPad receiver…', 4)
+          else
+            hs.alert.show('No receiver: open ' .. url .. ' on the iPad', 6)
+          end
+        end
+      end)
+    end)
+  end
+  ping()
+  castTry = hs.timer.doEvery(4, function()
+    if castWeb or tries >= 15 then castTry:stop(); castTry = nil else ping() end
+  end)
+end
+function M.casting() return castWeb end
 
 local vibe, vibeRaw = nil, nil
 local menu = nil
@@ -624,6 +678,7 @@ local function js(fn, ...)
 end
 
 local function nowText()
+  if castWeb then return '▶ CAST' end
   if tape then return '▶ VHS' end
   if current and running() then return string.format('▶ CH %02d', current) end
   return ''
@@ -972,6 +1027,7 @@ end
 -- the one playing, else the last, else the first), moving it back from
 -- playOn's full screen if needed.
 function M.pip(n)
+  if castWeb then castWeb = false; castCmd('off') end
   local keep = n == nil and tape ~= nil and running() -- move the tape, don't change it
   withNumbers(function()
     n = n or current or last or numbers[1] or 1
@@ -1004,6 +1060,7 @@ end
 
 -- Change volume by delta (mpv shows the level on the player).
 function M.volume(delta)
+  if castWeb then return castCmd(delta > 0 and 'volup' or 'voldown') end
   ipc({ 'osd-msg-bar', 'add', 'volume', delta })
 end
 
