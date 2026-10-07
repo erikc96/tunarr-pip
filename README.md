@@ -73,6 +73,8 @@ tunarrPip = require('tunarr_pip').setup({
   upKey = '=', downKey = '-',  -- ⌥= / ⌥- for channel up/down
   randomKey = nil,             -- no random key
   warmMinutes = 5,             -- how long a hidden player stays connected
+  -- CAST in the Fuzz panel's TV tab (or C there): where else to play
+  cast = { { name = 'TV', run = function() tunarrPip.playOn('LG TV') end } },
 })
 ```
 

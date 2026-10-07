@@ -55,6 +55,7 @@ M.config = {
   tvUser = nil,    -- its login; password in the Keychain (service 'craigo-tv')
   vhsKey = { { 'alt', 'shift' }, 'v' }, -- opt-shift-v (another app often owns opt-v)
   menubar = true,  -- Fuzz in the menu bar (needs tvUrl)
+  cast = {},       -- the panel's CAST list: { { name = 'IPAD', run = function() ... end }, ... }
 }
 
 local SOCKET = '/tmp/tunarr-pip.sock'
@@ -864,6 +865,9 @@ onMessage = function(m)
     panelReady = true
     js('tab', J(panelTab))
     if findPending then findPending = false; js('find') end
+    local casts = {}
+    for i, t in ipairs(M.config.cast) do casts[i] = t.name end
+    js('casts', #casts > 0 and J(casts) or '[]')
     panelPush()
     if shelfCache then pushShelves() end
   elseif m.act == 'tab' and (m.tab == 'tv' or m.tab == 'club' or m.tab == 'vhs') then
@@ -883,6 +887,9 @@ onMessage = function(m)
     M.play(tonumber(m.channel))
     syncRemote()
     hs.timer.doAfter(2, dock)
+  elseif m.act == 'cast' and M.config.cast[tonumber(m.i)] then
+    M.config.cast[tonumber(m.i)].run()
+    hs.timer.doAfter(0.5, syncRemote)
   elseif m.act == 'filter' then
     fzfFilter(m.seq, m.q, m.lines)
   elseif m.act == 'channels' then
