@@ -72,6 +72,7 @@ local task = nil       -- running mpv hs.task
 -- A receiver playing on its own (started on the iPad), from cast/receivers. With nothing playing
 -- here, the keys and the finder take it over (attach).
 local activeRx = nil
+local castCh = nil -- the channel the cast receiver last reported
 local function attach()
   if not castWeb and activeRx and not (task and task:isRunning()) then castWeb = activeRx end
 end
@@ -527,6 +528,7 @@ function M.castWeb(rx, wakeTopic)
         if running() then M.stop() end
         if castWeb then castCmd('off') end -- leaving another receiver
         castWeb = rx
+        castCh = n
         castCmd('tune', n)
         hs.alert.show(string.format('Casting CH %02d to %s', n, rx:upper()), 2)
       elseif tries == 1 then
@@ -555,7 +557,7 @@ function M.refreshReceivers()
     if status ~= 200 or type(rows) ~= 'table' then return end
     local found, open = nil, false
     for _, r in ipairs(rows) do
-      if r.name == castWeb then found, open = castWeb, true; break end -- still there
+      if r.name == castWeb then found, open = castWeb, true; castCh = r.ch; break end -- still there
       if not found and type(r.ch) == 'number' then found = r.name end
     end
     if castWeb and not open then castWeb = false end -- its page was closed
@@ -963,7 +965,7 @@ onMessage = function(m)
     js('casts', #casts > 0 and J(casts) or '[]')
     panelPush()
     if shelfCache then pushShelves() end
-  elseif m.act == 'tab' and (m.tab == 'tv' or m.tab == 'club' or m.tab == 'vhs') then
+  elseif m.act == 'tab' and (m.tab == 'tv' or m.tab == 'club' or m.tab == 'vhs' or m.tab == 'xray') then
     panelTab = m.tab
   elseif m.act == 'close' then
     if panel then panel:hide() end
@@ -989,6 +991,29 @@ onMessage = function(m)
   elseif m.act == 'cast' and M.config.cast[tonumber(m.i)] then
     M.config.cast[tonumber(m.i)].run()
     hs.timer.doAfter(0.5, syncRemote)
+  elseif m.act == 'xray' then
+    -- What's on here, or on the receiver we're casting to (asked fresh: it may have changed channel).
+    local function show(n)
+      if not n then return js('xray', 'null') end
+      tv('GET', 'xray/' .. n, nil, function(status, data)
+        js('xray', status == 200 and data and J(data) or J({ error = status }))
+      end)
+    end
+    if castWeb then
+      tv('GET', 'cast/here?rx=' .. castWeb, nil, function(status, data)
+        if status == 200 and data and type(data.ch) == 'number' then castCh = data.ch end
+        show(castCh)
+      end)
+    else
+      show(running() and current or nil)
+    end
+  elseif m.act == 'person' and type(m.name) == 'string' then
+    local name = m.name:sub(1, 80)
+    tv('GET', 'xray/person?name=' .. hs.http.encodeForQuery(name), nil, function(status, data)
+      js('person', J(name), status == 200 and data and J(data) or 'null')
+    end)
+  elseif m.act == 'open' and type(m.url) == 'string' and m.url:match('^https://en%.wikipedia%.org/') then
+    hs.urlevent.openURL(m.url)
   elseif m.act == 'filter' then
     fzfFilter(m.seq, m.q, m.lines)
   elseif m.act == 'channels' then

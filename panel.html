@@ -73,6 +73,7 @@ input:focus { border-color: var(--osd); }
   <button data-tab="tv">TV</button>
   <button data-tab="club">CLUB</button>
   <button data-tab="vhs">VHS</button>
+  <button data-tab="xray">X-RAY</button>
   <span class="sp"></span>
   <span class="dim link" id="keys" title="vim keys">?</span>
   <span class="dim" id="now"></span>
@@ -84,7 +85,7 @@ input:focus { border-color: var(--osd); }
   <p>gg G · ^d ^u ^f ^b &nbsp; top, bottom, pages</p>
   <p>enter o l &nbsp; play / open</p>
   <p>/ &nbsp; search · esc leaves it · ^n ^p move</p>
-  <p>t c v · H L · gt gT &nbsp; tabs · &lt; &gt; &nbsp; VHS shelves</p>
+  <p>t c v x · H L · gt gT &nbsp; tabs · &lt; &gt; &nbsp; VHS shelves</p>
   <p>] [ &nbsp; channel up / down · r random</p>
   <p>space &nbsp; hide / show · = - &nbsp; volume</p>
   <p>p &nbsp; mini player · C &nbsp; cast (1-9 picks) · X &nbsp; off · q esc &nbsp; close</p>
@@ -102,6 +103,7 @@ input:focus { border-color: var(--osd); }
   <div class="chans" id="chans"></div>
 </main>
 <main id="club" hidden></main>
+<main id="xray" hidden></main>
 <main id="vhs" hidden>
   <input id="q" placeholder="SEARCH THE STORE…" autocomplete="off" spellcheck="false">
   <div class="chips" id="chips"></div>
@@ -156,6 +158,45 @@ app.tab = (t) => {
   if (t === "tv") send({ act: "channels" });
   $("vhs").hidden = t !== "vhs";
   if (t === "vhs" && !tapes) send({ act: "shelves" });
+  $("xray").hidden = t !== "xray";
+  if (t === "xray") send({ act: "xray" });
+};
+
+// ---- X-Ray: what's on, from Plex and Wikipedia (craigo.art/tv api xray/<n>) ----
+app.xray = (x) => {
+  const box = $("xray"), keep = box.scrollTop;
+  box.textContent = "";
+  if (!x) { box.append(el("p", "dim", "NOTHING PLAYING · PICK A CHANNEL")); return; }
+  if (x.error) { box.append(el("p", "dim", "NO X-RAY FOR THIS ONE")); return; }
+  const head = x.show ? `${x.show} · S${pad(x.season ?? 0)}E${pad(x.episode ?? 0)} ${x.title}` : x.title || "";
+  box.append(el("h3", null, `CH ${pad(x.channel)} · ${head}`.toUpperCase()));
+  const facts = [x.year, x.contentRating, x.rating ? `★ ${Number(x.rating).toFixed(1)}` : null, x.studio, ...(x.genres || [])].filter(Boolean);
+  if (facts.length) box.append(el("p", "dim", facts.join(" · ").toUpperCase()));
+  if (x.summary) box.append(el("p", null, x.summary));
+  const crew = [x.crew?.director?.length ? "DIRECTED BY " + x.crew.director.join(", ") : null,
+    x.crew?.writer?.length ? "WRITTEN BY " + x.crew.writer.join(", ") : null].filter(Boolean);
+  if (crew.length) box.append(el("p", "dim", crew.join(" · ").toUpperCase()));
+  if ((x.cast || []).length) {
+    box.append(el("h3", null, x.guest ? "IN THIS EPISODE" : "CAST"));
+    for (const c of x.cast) {
+      const p = el("p", "link who", c.name.toUpperCase() + (c.role ? ` · ${c.role}` : ""));
+      p.dataset.name = c.name;
+      p.onclick = () => { const b = p.nextElementSibling; if (b && b.classList.contains("bio")) b.remove(); else send({ act: "person", name: c.name }); };
+      box.append(p);
+    }
+  }
+  for (const w of x.wiki || []) {
+    box.append(el("h3", null, "WIKIPEDIA · " + w.title.toUpperCase()), el("p", null, w.extract));
+    if (w.url) { const a = el("p", "link dim", "READ MORE ↗"); a.onclick = () => send({ act: "open", url: w.url }); box.append(a); }
+  }
+  box.scrollTop = keep;
+};
+// An actor's Wikipedia intro, shown under their row (enter again hides it).
+app.person = (name, w) => {
+  const row = [...document.querySelectorAll("#xray .who")].find((p) => p.dataset.name === name);
+  if (!row) return;
+  if (row.nextElementSibling && row.nextElementSibling.classList.contains("bio")) row.nextElementSibling.remove();
+  row.after(el("p", "dim bio", (w && w.extract) || "NOTHING ON WIKIPEDIA"));
 };
 app.now = (s) => { $("now").textContent = s || ""; };
 
@@ -382,14 +423,14 @@ $("keys").onclick = () => { $("help").hidden = !$("help").hidden; };
 // Normal mode unless a search box has focus. j/k/h/l move the cursor (h/l
 // across the VHS grid, h backs out of a show), Enter/o picks, / searches,
 // t/c/v switch tabs, the PiP keys work as letters, ? shows them all.
-const view = () => !$("tv").hidden ? (castOpen() ? "cast" : "tv") : !$("vhs").hidden ? ($("showView").hidden ? "shelf" : "eps") : "club";
+const view = () => !$("tv").hidden ? (castOpen() ? "cast" : "tv") : !$("vhs").hidden ? ($("showView").hidden ? "shelf" : "eps") : !$("xray").hidden ? "xray" : "club";
 const pane = () => $(curTab());
 // Every clickable thing in each view, in reading order; j/k move the cursor over them, enter/o/l clicks.
 // Club: Fuzz (pet him), who's on now (join), the week's top channels.
 const items = () => [...document.querySelectorAll({ tv: "#chans p", cast: "#castList p", shelf: "#shelf .tape",
-  eps: ".eps p", club: "#club .fuzz, #club .link" }[view()] || "none")];
+  eps: ".eps p", club: "#club .fuzz, #club .link", xray: "#xray .link" }[view()] || "none")];
 const cols = () => view() === "shelf" ? 3 : 1;
-const sel = { tv: 0, cast: 0, shelf: 0, eps: 0, club: 0 };
+const sel = { tv: 0, cast: 0, shelf: 0, eps: 0, club: 0, xray: 0 };
 const edge = (end) => { if (!items().length) pane().scrollTop = end ? 1e9 : 0; else { sel[view()] = end ? 1e9 : 0; markSel(true); } };
 function markSel(scroll) {
   const v = view(), list = items();
@@ -406,7 +447,7 @@ function move(d) {
   markSel(true);
 }
 function pick() { const it = items()[sel[view()]]; if (it) it.click(); }
-const TABS = ["tv", "club", "vhs"];
+const TABS = ["tv", "club", "vhs", "xray"];
 const curTab = () => TABS.find((t) => !$(t).hidden);
 function switchTab(t) { app.tab(t); send({ act: "tab", tab: t }); document.activeElement.blur(); markSel(true); }
 const back = () => { if (view() === "eps") { renderShelf(); markSel(true); } };
@@ -424,7 +465,8 @@ const KEYS = {
   Enter: pick, o: pick, Backspace: back, "-": () => remote("voldown"),
   "/": () => { const q = curTab() === "tv" ? $("cq") : curTab() === "vhs" ? $("q") : null; if (q) { if (castOpen()) toggleCast(false); q.focus(); q.select(); } },
   t: () => switchTab("tv"), c: () => switchTab("club"), v: () => switchTab("vhs"),
-  H: () => switchTab(TABS[(TABS.indexOf(curTab()) + 2) % 3]), L: () => switchTab(TABS[(TABS.indexOf(curTab()) + 1) % 3]),
+  H: () => switchTab(TABS[(TABS.indexOf(curTab()) + TABS.length - 1) % TABS.length]), L: () => switchTab(TABS[(TABS.indexOf(curTab()) + 1) % TABS.length]),
+  x: () => switchTab("xray"),
   "]": () => remote("up"), "[": () => remote("down"), r: () => remote("random"), " ": () => remote("toggle"),
   "=": () => remote("volup"), "+": () => remote("volup"), p: () => remote("pip"), X: () => remote("stop"),
   C: () => { if (view() === "tv") toggleCast(); },
