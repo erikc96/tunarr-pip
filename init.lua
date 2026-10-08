@@ -1134,32 +1134,84 @@ local function bind(key, fn)
   elseif key then hs.hotkey.bind({ 'alt' }, key, fn) end
 end
 
--- A click on the PiP (not a drag, not a double-click, which is mpv's fullscreen) opens the Fuzz
--- panel on its X-RAY tab; another click closes it. The tap passes through to mpv untouched.
-local tapDown, tapTimer
-local function watchTaps()
-  M.tapWatch = hs.eventtap.new({ hs.eventtap.event.types.leftMouseDown, hs.eventtap.event.types.leftMouseUp }, function(e)
-    if not running() or hidden then return false end
-    local p = hs.mouse.absolutePosition()
-    if e:getType() == hs.eventtap.event.types.leftMouseDown then
-      tapDown = p
-      if tapTimer and e:getProperty(hs.eventtap.event.properties.mouseEventClickState) > 1 then
-        tapTimer:stop(); tapTimer = nil
-      end
-    elseif tapDown and math.abs(p.x - tapDown.x) + math.abs(p.y - tapDown.y) < 5
-      and e:getProperty(hs.eventtap.event.properties.mouseEventClickState) == 1 then
-      -- Wait out a double-click; look the window up after, off the event path.
-      tapTimer = hs.timer.doAfter(0.3, function()
-        tapTimer = nil
-        local st = M.state()
-        if st.frame and not st.screen and hs.geometry.point(p.x, p.y):inside(hs.geometry.rect(st.frame)) then
-          M.panel('xray')
-        end
-      end)
-    end
-    return false
-  end):start()
+-- X-Ray over the PiP: while the mouse rests on the player, what's on (title, facts, summary,
+-- cast) draws on top of the picture. A canvas, so clicks and drags still reach mpv.
+local xrayCv, xrayData, xrayFor, xrayStop, xrayFrame, xrayFrameAt = nil, nil, nil, 0, nil, 0
+-- Styled like craigo.art/tv's channel banner: VT323, white on the blue box, amber accents.
+local WHITE, AMBER, DIM = { white = 1 }, { red = 1, green = .7, blue = .28 }, { white = 1, alpha = .75 }
+local function xrayText(x)
+  local face = hs.styledtext.validFont('VT323') and 'VT323' or 'Menlo'
+  local function seg(t, color, size) return hs.styledtext.new(t, { font = { name = face, size = size or 16 }, color = color,
+    shadow = { offset = { h = -2, w = 2 }, blurRadius = 0, color = { black = 1, alpha = .7 } },
+    paragraphStyle = { lineBreak = 'wordWrap', paragraphSpacing = 2 } }) end
+  if not x then return seg('X-RAY · LOOKING…', DIM) end
+  if x.error then return seg('NO X-RAY FOR THIS ONE', DIM) end
+  local head = x.show and string.format('%s · S%02dE%02d %s', x.show, x.season or 0, x.episode or 0, x.title or '') or (x.title or '')
+  local t = seg(head:upper() .. '\n', WHITE, 20)
+  local facts = {}
+  for _, f in ipairs({ x.year, x.contentRating, x.rating and string.format('★ %.1f', x.rating) or nil, x.studio }) do facts[#facts + 1] = tostring(f) end
+  for _, g in ipairs(x.genres or {}) do facts[#facts + 1] = g end
+  if #facts > 0 then t = t .. seg(table.concat(facts, ' · '):upper() .. '\n', DIM) end
+  local cast = {}
+  for i, c in ipairs(x.cast or {}) do
+    if i > 8 then break end
+    cast[#cast + 1] = c.name:upper() .. (c.role and c.role ~= '' and (' · ' .. c.role) or '')
+  end
+  if #cast > 0 then t = t .. seg((x.guest and 'IN THIS EPISODE' or 'CAST') .. '\n', AMBER) .. seg(table.concat(cast, '\n') .. '\n', WHITE) end
+  local sum = x.summary or (x.wiki and x.wiki[1] and x.wiki[1].extract)
+  if sum then t = t .. seg(sum:sub(1, 600) .. '\n', WHITE) end
+  return t
 end
+local function xrayDraw()
+  if not xrayCv or not xrayFrame then return end
+  local f = xrayFrame
+  xrayCv:frame(f)
+  local m = math.floor(math.min(f.w, f.h) * .05) -- the banner's 5% inset
+  xrayCv:replaceElements({
+    { type = 'rectangle', action = 'strokeAndFill', fillColor = { red = 12 / 255, green = 22 / 255, blue = 90 / 255, alpha = .82 },
+      strokeColor = { white = 1, alpha = .7 }, strokeWidth = 2, frame = { x = m, y = m, w = f.w - 2 * m, h = f.h - 2 * m } },
+    { type = 'text', text = xrayText(xrayData), frame = { x = m + 10, y = m + 6, w = f.w - 2 * m - 20, h = f.h - 2 * m - 12 } },
+  })
+end
+local function xrayLoad()
+  local n = current
+  if not n or (n == xrayFor and (xrayStop == 0 or os.time() * 1000 < xrayStop)) then return end
+  xrayFor, xrayData = n, nil
+  xrayDraw()
+  tv('GET', 'xray/' .. n, nil, function(status, data)
+    if xrayFor ~= n then return end
+    xrayData = status == 200 and type(data) == 'table' and data or { error = status }
+    xrayStop = tonumber(xrayData.stop) or 0
+    xrayDraw()
+  end)
+end
+local function xrayHover()
+  if not running() or hidden or not current or hs.eventtap.checkMouseButtons()[1] then
+    if xrayCv then xrayCv:hide() end
+    xrayFrame = nil
+    return
+  end
+  -- The window's frame through Accessibility, at most once a second (it can be dragged).
+  if not xrayFrame or hs.timer.secondsSinceEpoch() - xrayFrameAt > 1 then
+    local st = M.state()
+    xrayFrame, xrayFrameAt = st.frame and hs.geometry.rect(st.frame), hs.timer.secondsSinceEpoch()
+    -- Full screen (playOn): a column down the left, not the whole picture.
+    if xrayFrame and st.screen then xrayFrame.w = math.min(520, xrayFrame.w / 3) end
+  end
+  local p = hs.mouse.absolutePosition()
+  if not xrayFrame or not hs.geometry.point(p.x, p.y):inside(xrayFrame) then
+    if xrayCv and xrayCv:isShowing() then xrayCv:hide() end
+    return
+  end
+  if not xrayCv then
+    xrayCv = hs.canvas.new(xrayFrame)
+    xrayCv:level(hs.canvas.windowLevels.floating + 1)
+    xrayCv:behaviorAsLabels({ 'canJoinAllSpaces' })
+  end
+  if not xrayCv:isShowing() then xrayDraw(); xrayCv:show() end
+  xrayLoad()
+end
+M.xrayHover = xrayHover -- for debugging/tests
 
 function M.setup(opts)
   local c = M.config
@@ -1214,7 +1266,7 @@ function M.setup(opts)
       loadVibe()
       M.vibeTimer = hs.timer.doEvery(120, loadVibe)
       makePanel() -- hidden and loaded ahead, so opt-9 opens instantly
-      watchTaps()
+      M.xrayTimer = hs.timer.doEvery(0.2, xrayHover)
       M.refreshReceivers()
       M.receiverTimer = hs.timer.doEvery(15, M.refreshReceivers)
     else
