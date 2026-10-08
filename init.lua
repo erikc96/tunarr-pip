@@ -1134,6 +1134,33 @@ local function bind(key, fn)
   elseif key then hs.hotkey.bind({ 'alt' }, key, fn) end
 end
 
+-- A click on the PiP (not a drag, not a double-click, which is mpv's fullscreen) opens the Fuzz
+-- panel on its X-RAY tab; another click closes it. The tap passes through to mpv untouched.
+local tapDown, tapTimer
+local function watchTaps()
+  M.tapWatch = hs.eventtap.new({ hs.eventtap.event.types.leftMouseDown, hs.eventtap.event.types.leftMouseUp }, function(e)
+    if not running() or hidden then return false end
+    local p = hs.mouse.absolutePosition()
+    if e:getType() == hs.eventtap.event.types.leftMouseDown then
+      tapDown = p
+      if tapTimer and e:getProperty(hs.eventtap.event.properties.mouseEventClickState) > 1 then
+        tapTimer:stop(); tapTimer = nil
+      end
+    elseif tapDown and math.abs(p.x - tapDown.x) + math.abs(p.y - tapDown.y) < 5
+      and e:getProperty(hs.eventtap.event.properties.mouseEventClickState) == 1 then
+      -- Wait out a double-click; look the window up after, off the event path.
+      tapTimer = hs.timer.doAfter(0.3, function()
+        tapTimer = nil
+        local st = M.state()
+        if st.frame and not st.screen and hs.geometry.point(p.x, p.y):inside(hs.geometry.rect(st.frame)) then
+          M.panel('xray')
+        end
+      end)
+    end
+    return false
+  end):start()
+end
+
 function M.setup(opts)
   local c = M.config
   for k, v in pairs(opts or {}) do c[k] = v end
@@ -1187,6 +1214,7 @@ function M.setup(opts)
       loadVibe()
       M.vibeTimer = hs.timer.doEvery(120, loadVibe)
       makePanel() -- hidden and loaded ahead, so opt-9 opens instantly
+      watchTaps()
       M.refreshReceivers()
       M.receiverTimer = hs.timer.doEvery(15, M.refreshReceivers)
     else
