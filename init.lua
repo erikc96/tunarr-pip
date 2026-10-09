@@ -1139,15 +1139,25 @@ end
 local xrayCv, xrayData, xrayFor, xrayStop, xrayFrame, xrayFrameAt = nil, nil, nil, 0, nil, 0
 -- Styled like craigo.art/tv's channel banner: VT323, white on the blue box, amber accents.
 local WHITE, AMBER, DIM = { white = 1 }, { red = 1, green = .7, blue = .28 }, { white = 1, alpha = .75 }
-local function xrayText(x)
+-- Returns the styled text and its estimated wrapped height for a box availW wide (canvas text can't
+-- report that), so the wheel knows how far it may scroll.
+local function xrayText(x, availW)
   local face = hs.styledtext.validFont('VT323') and 'VT323' or 'Menlo'
-  local function seg(t, color, size) return hs.styledtext.new(t, { font = { name = face, size = size or 16 }, color = color,
-    shadow = { offset = { h = -2, w = 2 }, blurRadius = 0, color = { black = 1, alpha = .7 } },
-    paragraphStyle = { lineBreak = 'wordWrap', paragraphSpacing = 2 } }) end
-  if not x then return seg('X-RAY · LOOKING…', DIM) end
-  if x.error then return seg('NO X-RAY FOR THIS ONE', DIM) end
+  local height = 0
+  local function seg(t, color, size)
+    local st = hs.styledtext.new(t, { font = { name = face, size = size or 13 }, color = color,
+      shadow = { offset = { h = -2, w = 2 }, blurRadius = 0, color = { black = 1, alpha = .7 } },
+      paragraphStyle = { lineBreak = 'wordWrap', paragraphSpacing = 2 } })
+    for line in (t:gsub('\n$', '') .. '\n'):gmatch('(.-)\n') do
+      local d = hs.drawing.getTextDrawingSize(hs.styledtext.new(line == '' and ' ' or line, { font = { name = face, size = size or 13 } }))
+      height = height + math.max(1, math.ceil(d.w / availW)) * d.h + 2
+    end
+    return st
+  end
+  if not x then return seg('X-RAY · LOOKING…', DIM), height end
+  if x.error then return seg('NO X-RAY FOR THIS ONE', DIM), height end
   local head = x.show and string.format('%s · S%02dE%02d %s', x.show, x.season or 0, x.episode or 0, x.title or '') or (x.title or '')
-  local t = seg(head:upper() .. '\n', WHITE, 20)
+  local t = seg(head:upper() .. '\n', WHITE, 16)
   local facts = {}
   for _, f in ipairs({ x.year, x.contentRating, x.rating and string.format('★ %.1f', x.rating) or nil, x.studio }) do facts[#facts + 1] = tostring(f) end
   for _, g in ipairs(x.genres or {}) do facts[#facts + 1] = g end
@@ -1159,24 +1169,30 @@ local function xrayText(x)
   end
   if #cast > 0 then t = t .. seg((x.guest and 'IN THIS EPISODE' or 'CAST') .. '\n', AMBER) .. seg(table.concat(cast, '\n') .. '\n', WHITE) end
   local sum = x.summary or (x.wiki and x.wiki[1] and x.wiki[1].extract)
-  if sum then t = t .. seg(sum:sub(1, 600) .. '\n', WHITE) end
-  return t
+  if sum then t = t .. seg(sum:sub(1, 1200) .. '\n', WHITE) end
+  return t, height
 end
+local xrayScroll = 0
 local function xrayDraw()
   if not xrayCv or not xrayFrame then return end
   local f = xrayFrame
   xrayCv:frame(f)
-  local m = math.floor(math.min(f.w, f.h) * .05) -- the banner's 5% inset
+  local m = math.floor(math.min(f.w, f.h) * .09) -- a bit smaller than the banner's 5% inset
+  local box = { x = m, y = m, w = f.w - 2 * m, h = f.h - 2 * m }
+  local text, th = xrayText(xrayData, box.w - 20)
+  xrayScroll = math.max(0, math.min(xrayScroll, th - (box.h - 12)))
   xrayCv:replaceElements({
     { type = 'rectangle', action = 'strokeAndFill', fillColor = { red = 12 / 255, green = 22 / 255, blue = 90 / 255, alpha = .82 },
-      strokeColor = { white = 1, alpha = .7 }, strokeWidth = 2, frame = { x = m, y = m, w = f.w - 2 * m, h = f.h - 2 * m } },
-    { type = 'text', text = xrayText(xrayData), frame = { x = m + 10, y = m + 6, w = f.w - 2 * m - 20, h = f.h - 2 * m - 12 } },
+      strokeColor = { white = 1, alpha = .7 }, strokeWidth = 2, frame = box },
+    { type = 'rectangle', action = 'clip', frame = box },
+    { type = 'text', text = text, frame = { x = m + 10, y = m + 6 - xrayScroll, w = box.w - 20, h = th + 20 } },
+    { type = 'resetClip' },
   })
 end
 local function xrayLoad()
   local n = current
   if not n or (n == xrayFor and (xrayStop == 0 or os.time() * 1000 < xrayStop)) then return end
-  xrayFor, xrayData = n, nil
+  xrayFor, xrayData, xrayScroll = n, nil, 0
   xrayDraw()
   tv('GET', 'xray/' .. n, nil, function(status, data)
     if xrayFor ~= n then return end
@@ -1211,6 +1227,15 @@ local function xrayHover()
   if not xrayCv:isShowing() then xrayDraw(); xrayCv:show() end
   xrayLoad()
 end
+-- The wheel scrolls the X-Ray while it is up (and doesn't reach mpv).
+local xrayWheel = hs.eventtap.new({ hs.eventtap.event.types.scrollWheel }, function(e)
+  if not (xrayCv and xrayCv:isShowing() and xrayFrame) then return false end
+  local p = hs.mouse.absolutePosition()
+  if not hs.geometry.point(p.x, p.y):inside(xrayFrame) then return false end
+  xrayScroll = xrayScroll - e:getProperty(hs.eventtap.event.properties.scrollWheelEventPointDeltaAxis1)
+  xrayDraw()
+  return true
+end):start()
 M.xrayHover = xrayHover -- for debugging/tests
 
 function M.setup(opts)
