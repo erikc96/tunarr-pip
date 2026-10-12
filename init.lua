@@ -1184,7 +1184,8 @@ local function xrayText(x, availW)
       paragraphStyle = { lineBreak = 'wordWrap', paragraphSpacing = 2 } })
     for line in (t:gsub('\n$', '') .. '\n'):gmatch('(.-)\n') do
       local d = hs.drawing.getTextDrawingSize(hs.styledtext.new(line == '' and ' ' or line, { font = { name = face, size = size or 13 } }))
-      height = height + math.max(1, math.ceil(d.w / availW)) * d.h + 2
+      -- 1.15: word wrap breaks earlier than the raw width ratio, so pad it or the last lines clip
+      height = height + math.max(1, math.ceil(d.w * 1.15 / availW)) * d.h + 2
     end
     return st
   end
@@ -1199,12 +1200,12 @@ local function xrayText(x, availW)
   if x.show and #facts > 0 then t = t .. seg(table.concat(facts, ' · '):upper() .. '\n', DIM, 14) end
   local cast = {}
   for i, c in ipairs(x.cast or {}) do
-    if i > 4 then break end
+    if i > 8 then break end
     cast[#cast + 1] = c.name:upper()
   end
   if #cast > 0 then t = t .. seg((x.guest and 'GUEST ' or 'WITH ') .. table.concat(cast, ', ') .. '\n', DIM, 14) end
   local sum = x.summary or (x.wiki and x.wiki[1] and x.wiki[1].extract)
-  if sum then t = t .. seg(#sum > 200 and (sum:sub(1, 200):gsub('%s+%S*$', '') .. '…') or sum, DIM, 14) end
+  if sum then t = t .. seg(sum, DIM, 14) end
   return t, height
 end
 local xrayScroll = 0
