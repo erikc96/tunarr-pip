@@ -980,6 +980,7 @@ local REMOTE = {
   pip = function() M.pip() end,
   max = function() M.maximize() end,
   stop = function() M.stop() end,
+  vhsnow = function() M.vhsNow() end,
 }
 
 onMessage = function(m)
