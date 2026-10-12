@@ -90,6 +90,7 @@ input:focus { border-color: var(--osd); }
   <p>t c v x · H L · gt gT &nbsp; tabs · &lt; &gt; &nbsp; VHS shelves</p>
   <p>] [ &nbsp; channel up / down · r or \ random · w surf</p>
   <p>space &nbsp; hide / show · = - &nbsp; volume</p>
+  <p>n &nbsp; play what's on now as a VHS tape (also ⌥⇧N)</p>
   <p>f &nbsp; maximize / restore the player · p &nbsp; mini player · C &nbsp; cast (1-9 picks) · X &nbsp; off · q esc &nbsp; close</p>
 </div>
 <main id="tv" hidden>
@@ -98,6 +99,7 @@ input:focus { border-color: var(--osd); }
     <button data-cmd="random" title="random channel: \ or r or ⌥\">RANDOM</button><button data-cmd="surf" id="surfBtn" title="surf: next channel every 30 s, 1, 3, 5, 15, 30, 60 min, then off: w">SURF</button><button data-cmd="toggle" title="hide / show the player: space">HIDE</button>
     <button data-cmd="voldown" title="volume down: - or ⌥-">VOL −</button><button data-cmd="volup" title="volume up: = or ⌥=">VOL +</button>
     <button data-cmd="pip" title="mini player on this screen: p">PIP</button><button data-cmd="max" title="maximize / restore the player: f">MAX</button><button data-cmd="stop" title="player off: X or ⌥0">OFF</button>
+    <button data-cmd="vhsnow" class="wide" title="start what's on now as a VHS tape, from the top: n">▶ PLAY IN VHS</button>
     <button id="castBtn" class="wide" title="cast to a receiver: C" hidden>CAST ▸</button>
   </div>
   <div class="chans" id="castList" hidden></div>
@@ -471,7 +473,7 @@ const KEYS = {
   H: () => switchTab(TABS[(TABS.indexOf(curTab()) + TABS.length - 1) % TABS.length]), L: () => switchTab(TABS[(TABS.indexOf(curTab()) + 1) % TABS.length]),
   x: () => switchTab("xray"),
   "]": () => remote("up"), "[": () => remote("down"), r: () => remote("random"), "\\": () => remote("random"), f: () => remote("max"), w: () => remote("surf"), " ": () => remote("toggle"),
-  "=": () => remote("volup"), "+": () => remote("volup"), p: () => remote("pip"), X: () => remote("stop"),
+  "=": () => remote("volup"), "+": () => remote("volup"), p: () => remote("pip"), X: () => remote("stop"), n: () => remote("vhsnow"),
   C: () => { if (view() === "tv") toggleCast(); },
   q: () => send({ act: "close" }), "?": () => { $("help").hidden = !$("help").hidden; },
 };
