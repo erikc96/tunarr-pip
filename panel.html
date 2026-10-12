@@ -491,6 +491,8 @@ document.addEventListener("keydown", (e) => {
   if (typing) {
     // opt-9 opens with search focused: backslash on an empty box is a remote, never text.
     if (e.key === "\\" && !e.target.value && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); remote("random"); return; }
+    // opt-9 then v on an empty channel search jumps to the VHS tab.
+    if (e.key === "v" && e.target.id === "cq" && !e.target.value && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); KEYS.v(); return; }
     // Enter or ctrl-n/p from the search box: leave it and move or pick.
     // Enter in "find a channel" plays the highlighted row and closes the finder.
     if (e.key === "Enter") {
