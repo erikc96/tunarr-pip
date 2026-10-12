@@ -10,6 +10,7 @@
 -- opt-\         random channel
 -- opt-= / opt--  volume up / down
 -- opt-shift-v    the Fuzz panel's VHS store: pick a Plex movie or episode
+-- opt-shift-n    start what the live channel is showing as a VHS tape, from the top
 --
 -- With tvUrl/tvUser set (a craigo.art/tv account), the player also counts as
 -- watching there: it posts a beat every minute a channel or tape really plays,
