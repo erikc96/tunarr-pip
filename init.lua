@@ -54,6 +54,7 @@ M.config = {
   tvUrl = nil,     -- craigo.art/tv style site, e.g. 'https://craigo.art/tv'; enables the club and VHS
   tvUser = nil,    -- its login; password in the Keychain (service 'craigo-tv')
   vhsKey = { { 'alt', 'shift' }, 'v' }, -- opt-shift-v (another app often owns opt-v)
+  vhsNowKey = { { 'alt', 'shift' }, 'n' }, -- start what's on now as a tape, from the top
   menubar = true,  -- Fuzz in the menu bar (needs tvUrl)
   cast = {},       -- the panel's CAST list: { { name = 'IPAD', run = function() ... end }, ... }
 }
@@ -1082,6 +1083,38 @@ function M.playTape(t)
   end)
 end
 
+-- Start what the live channel is showing as a VHS tape, from the beginning (opt-shift-n).
+-- The X-Ray gives the title (and show, season, episode); the shelves give the tape key.
+function M.vhsNow(retry)
+  if not current then return hs.alert.show('VHS: nothing playing') end
+  local function low(v) return tostring(v or ''):lower() end
+  tv('GET', 'xray/' .. current, nil, function(status, x)
+    if status ~= 200 or type(x) ~= 'table' or not x.title then return hs.alert.show('VHS: no X-Ray for this channel') end
+    if not shelfCache then
+      if retry then return hs.alert.show('VHS: shelves not loaded') end
+      loadShelves()
+      return hs.timer.doAfter(4, function() M.vhsNow(true) end)
+    end
+    local want = low(x.show or x.title)
+    for _, t in ipairs(shelfCache) do
+      if low(t.title) == want and (x.show and t.type == 'show' or not x.show and t.type ~= 'show') then
+        if not x.show then hs.settings.clear(posKey(t.key)); return M.playTape(note(t)) end
+        return tv('GET', 'vhs/tape/' .. t.key, nil, function(st, show)
+          for _, ep in ipairs(st == 200 and show and show.episodes or {}) do
+            if ep.season == x.season and ep.episode == x.episode then
+              ep.show = show.title
+              hs.settings.clear(posKey(ep.key))
+              return M.playTape(note(ep))
+            end
+          end
+          hs.alert.show('VHS: no tape for that episode')
+        end)
+      end
+    end
+    hs.alert.show('VHS: not on the shelves: ' .. x.title)
+  end)
+end
+
 --------------------------------
 -- Setup
 --------------------------------
@@ -1327,6 +1360,7 @@ function M.setup(opts)
     if tok then
       TVPW = tpw:gsub('%s+$', '')
       bind(c.vhsKey, M.vhs)
+      bind(c.vhsNowKey, M.vhsNow)
       M.ticker = hs.timer.doEvery(15, tick)
       if c.menubar then
         menu = hs.menubar.new()
