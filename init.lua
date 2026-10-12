@@ -1300,7 +1300,7 @@ local function xrayHover()
   if not xrayCv then
     xrayCv = hs.canvas.new(xrayFrame)
     xrayCv:level(hs.canvas.windowLevels.floating + 1)
-    xrayCv:behaviorAsLabels({ 'canJoinAllSpaces' })
+    xrayCv:behaviorAsLabels({ 'canJoinAllSpaces', 'fullScreenAuxiliary' }) -- shows over a native full-screen Space
   end
   if not xrayCv:isShowing() then xrayDraw(); xrayCv:show() end
   xrayLoad()
