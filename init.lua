@@ -77,6 +77,7 @@ local function attach()
   if not castWeb and activeRx and not (task and task:isRunning()) then castWeb = activeRx end
 end
 local current = nil    -- channel number it's playing
+local surfLevel, surfTimer = 1, nil -- surf interval index (1 = off) and its timer
 local last = nil       -- last channel played, for channel up/down after a stop
 local numbers = {}     -- sorted channel numbers, for up/down/random
 local hidden = false
@@ -141,6 +142,7 @@ local endTape, unbeat -- defined with the club below
 
 function M.stop()
   attach()
+  if M.surf and surfTimer then M.surf(1) end
   if castWeb then castCmd('off'); castWeb = false; activeRx = nil; return end
   cancelCool()
   endTape()
@@ -896,6 +898,11 @@ function M.find()
   return true
 end
 
+-- The panel's screen frame while it's open, for the break overlay's mouse passthrough.
+function M.panelFrame()
+  if panelVisible() then return panel:frame().table end
+end
+
 function M.pickerVisible()
   return (chooser ~= nil and chooser:isVisible()) or (panelVisible() and panelTab == 'tv')
 end
@@ -937,21 +944,39 @@ local function pushChannels()
   end)
 end
 
+-- Surf: each call moves to the next interval (30 s, 1, 3, 5, 15, 30, 60 min), then off.
+-- Steps up a channel on every tick; stop() ends it.
+local SURF = { 0, 30, 60, 180, 300, 900, 1800, 3600 }
+local SURF_LABEL = { 'SURF', '30S', '1M', '3M', '5M', '15M', '30M', '60M' }
+
+local function surfSync() js('surf', J(SURF_LABEL[surfLevel]), J(surfLevel > 1)) end
+
+function M.surf(level)
+  surfLevel = level or surfLevel % #SURF + 1
+  if surfTimer then surfTimer:stop(); surfTimer = nil end
+  if surfLevel > 1 then surfTimer = hs.timer.doEvery(SURF[surfLevel], function() M.step(1) end) end
+  surfSync()
+  hs.alert.show(surfLevel > 1 and ('Surf every ' .. SURF_LABEL[surfLevel]) or 'Surf off', 1)
+end
+
 local function syncRemote()
   js('now', J(nowText()))
   js('current', J(current or false), J(hidden))
+  surfSync()
 end
 
 local REMOTE = {
   up = function() M.step(1) end,
   down = function() M.step(-1) end,
   random = function() M.random() end,
+  surf = function() M.surf() end,
   volup = function() M.volume(M.config.volStep) end,
   voldown = function() M.volume(-M.config.volStep) end,
   toggle = function()
     if current and running() then M.play(current) elseif last then M.play(last) end
   end,
   pip = function() M.pip() end,
+  max = function() M.maximize() end,
   stop = function() M.stop() end,
 }
 
@@ -1121,6 +1146,15 @@ function M.pip(n)
   end)
 end
 
+-- Toggle the player between full screen (on the screen it's on) and the mini player.
+function M.maximize()
+  local st = M.state()
+  if not st.pid then return end
+  if st.screen then return M.pip() end
+  local win = mpvApp() and mpvApp():allWindows()[1]
+  M.playOn(win and win:screen() or hs.mouse.getCurrentScreen())
+end
+
 -- Change volume by delta (mpv shows the level on the player).
 function M.volume(delta)
   attach()
@@ -1156,36 +1190,40 @@ local function xrayText(x, availW)
   end
   if not x then return seg('X-RAY · LOOKING…', DIM), height end
   if x.error then return seg('NO X-RAY FOR THIS ONE', DIM), height end
-  local head = x.show and string.format('%s · S%02dE%02d %s', x.show, x.season or 0, x.episode or 0, x.title or '') or (x.title or '')
-  local t = seg(head:upper() .. '\n', WHITE, 16)
+  -- Notification-banner layout: small amber label, bold title, then dim detail lines.
   local facts = {}
   for _, f in ipairs({ x.year, x.contentRating, x.rating and string.format('★ %.1f', x.rating) or nil, x.studio }) do facts[#facts + 1] = tostring(f) end
-  for _, g in ipairs(x.genres or {}) do facts[#facts + 1] = g end
-  if #facts > 0 then t = t .. seg(table.concat(facts, ' · '):upper() .. '\n', DIM) end
+  for i, g in ipairs(x.genres or {}) do if i <= 2 then facts[#facts + 1] = g end end
+  local label = x.show and string.format('%s · S%02dE%02d', x.show, x.season or 0, x.episode or 0) or table.concat(facts, ' · ')
+  local t = seg(label:upper() .. '\n', AMBER, 13) .. seg((x.title or ''):upper() .. '\n', WHITE, 19)
+  if x.show and #facts > 0 then t = t .. seg(table.concat(facts, ' · '):upper() .. '\n', DIM, 14) end
   local cast = {}
   for i, c in ipairs(x.cast or {}) do
-    if i > 8 then break end
-    cast[#cast + 1] = c.name:upper() .. (c.role and c.role ~= '' and (' · ' .. c.role) or '')
+    if i > 4 then break end
+    cast[#cast + 1] = c.name:upper()
   end
-  if #cast > 0 then t = t .. seg((x.guest and 'IN THIS EPISODE' or 'CAST') .. '\n', AMBER) .. seg(table.concat(cast, '\n') .. '\n', WHITE) end
+  if #cast > 0 then t = t .. seg((x.guest and 'GUEST ' or 'WITH ') .. table.concat(cast, ', ') .. '\n', DIM, 14) end
   local sum = x.summary or (x.wiki and x.wiki[1] and x.wiki[1].extract)
-  if sum then t = t .. seg(sum:sub(1, 1200) .. '\n', WHITE) end
+  if sum then t = t .. seg(#sum > 200 and (sum:sub(1, 200):gsub('%s+%S*$', '') .. '…') or sum, DIM, 14) end
   return t, height
 end
 local xrayScroll = 0
 local function xrayDraw()
   if not xrayCv or not xrayFrame then return end
-  local f = xrayFrame
-  xrayCv:frame(f)
-  local m = math.floor(math.min(f.w, f.h) * .09) -- a bit smaller than the banner's 5% inset
-  local box = { x = m, y = m, w = f.w - 2 * m, h = f.h - 2 * m }
-  local text, th = xrayText(xrayData, box.w - 20)
-  xrayScroll = math.max(0, math.min(xrayScroll, th - (box.h - 12)))
+  local f, m = xrayFrame, 8
+  -- A compact banner in the player's top-right corner, as tall as its text (the rest of the
+  -- window stays clear and clickable).
+  local w = math.min(f.w * .62, 340)
+  local text, th = xrayText(xrayData, w - 24)
+  local h = math.min(th + 20, f.h - 2 * m)
+  xrayScroll = math.max(0, math.min(xrayScroll, th + 20 - h))
+  xrayCv:frame({ x = f.x + f.w - w - m, y = f.y + m, w = w, h = h })
+  local box = { x = 0, y = 0, w = w, h = h }
   xrayCv:replaceElements({
-    { type = 'rectangle', action = 'strokeAndFill', fillColor = { red = 12 / 255, green = 22 / 255, blue = 90 / 255, alpha = .82 },
-      strokeColor = { white = 1, alpha = .7 }, strokeWidth = 2, frame = box },
-    { type = 'rectangle', action = 'clip', frame = box },
-    { type = 'text', text = text, frame = { x = m + 10, y = m + 6 - xrayScroll, w = box.w - 20, h = th + 20 } },
+    { type = 'rectangle', action = 'strokeAndFill', roundedRectRadii = { xRadius = 14, yRadius = 14 },
+      fillColor = { white = .1, alpha = .85 }, strokeColor = { white = 1, alpha = .12 }, strokeWidth = 1, frame = box },
+    { type = 'rectangle', action = 'clip', roundedRectRadii = { xRadius = 14, yRadius = 14 }, frame = box },
+    { type = 'text', text = text, frame = { x = 12, y = 8 - xrayScroll, w = w - 24, h = th + 20 } },
     { type = 'resetClip' },
   })
 end
@@ -1201,6 +1239,9 @@ local function xrayLoad()
     xrayDraw()
   end)
 end
+-- Like a video player's controls: it shows while the mouse moves over the player and
+-- hides after xrayIdle seconds of stillness (scrolling it counts as moving).
+local xrayIdle, xrayPos, xrayMoved = 2, nil, 0
 local function xrayHover()
   if not running() or hidden or not current or hs.eventtap.checkMouseButtons()[1] then
     if xrayCv then xrayCv:hide() end
@@ -1215,7 +1256,9 @@ local function xrayHover()
     if xrayFrame and st.screen then xrayFrame.w = math.min(520, xrayFrame.w / 3) end
   end
   local p = hs.mouse.absolutePosition()
-  if not xrayFrame or not hs.geometry.point(p.x, p.y):inside(xrayFrame) then
+  local now = hs.timer.secondsSinceEpoch()
+  if not xrayPos or xrayPos.x ~= p.x or xrayPos.y ~= p.y then xrayPos, xrayMoved = p, now end
+  if not xrayFrame or not hs.geometry.point(p.x, p.y):inside(xrayFrame) or now - xrayMoved > xrayIdle then
     if xrayCv and xrayCv:isShowing() then xrayCv:hide() end
     return
   end
@@ -1232,6 +1275,7 @@ local xrayWheel = hs.eventtap.new({ hs.eventtap.event.types.scrollWheel }, funct
   if not (xrayCv and xrayCv:isShowing() and xrayFrame) then return false end
   local p = hs.mouse.absolutePosition()
   if not hs.geometry.point(p.x, p.y):inside(xrayFrame) then return false end
+  xrayMoved = hs.timer.secondsSinceEpoch()
   xrayScroll = xrayScroll - e:getProperty(hs.eventtap.event.properties.scrollWheelEventPointDeltaAxis1)
   xrayDraw()
   return true

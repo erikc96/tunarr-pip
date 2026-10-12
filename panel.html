@@ -54,7 +54,9 @@ input:focus { border-color: var(--osd); }
 .remote { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 0 8px; }
 .remote button { font: inherit; background: #000; color: var(--label); border: 1px solid var(--line); padding: 3px 0; cursor: pointer; }
 .remote button:hover { color: var(--osd); border-color: var(--osd); box-shadow: 0 0 6px var(--osd-glow); }
+.remote button.on { color: var(--amber); border-color: var(--amber); }
 .remote button:active { transform: translateY(1px); }
+#tip { position: fixed; z-index: 99; pointer-events: none; background: #000; color: var(--osd); border: 1px solid var(--osd); padding: 2px 6px; font-size: 13px; max-width: 300px; box-shadow: 0 0 6px var(--osd-glow); }
 .remote .wide { grid-column: 1 / -1; }
 .chans p { padding: 3px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 .chans p:hover { color: var(--osd); }
@@ -86,17 +88,17 @@ input:focus { border-color: var(--osd); }
   <p>enter o l &nbsp; play / open</p>
   <p>/ &nbsp; search · esc leaves it · ^n ^p move</p>
   <p>t c v x · H L · gt gT &nbsp; tabs · &lt; &gt; &nbsp; VHS shelves</p>
-  <p>] [ &nbsp; channel up / down · r random</p>
+  <p>] [ &nbsp; channel up / down · r or \ random · w surf</p>
   <p>space &nbsp; hide / show · = - &nbsp; volume</p>
-  <p>p &nbsp; mini player · C &nbsp; cast (1-9 picks) · X &nbsp; off · q esc &nbsp; close</p>
+  <p>f &nbsp; maximize / restore the player · p &nbsp; mini player · C &nbsp; cast (1-9 picks) · X &nbsp; off · q esc &nbsp; close</p>
 </div>
 <main id="tv" hidden>
   <div class="remote">
-    <button data-cmd="down" title="⌥[">◀ CH</button><button data-cmd="up" title="⌥]">CH ▶</button>
-    <button data-cmd="random" title="⌥\">RANDOM</button><button data-cmd="toggle" title="press the channel again">HIDE</button>
-    <button data-cmd="voldown" title="⌥-">VOL −</button><button data-cmd="volup" title="⌥=">VOL +</button>
-    <button data-cmd="pip" title="mini player on this screen">PIP</button><button data-cmd="stop" title="⌥0">OFF</button>
-    <button id="castBtn" class="wide" title="C" hidden>CAST ▸</button>
+    <button data-cmd="down" title="channel down: [ or ⌥[">◀ CH</button><button data-cmd="up" title="channel up: ] or ⌥]">CH ▶</button>
+    <button data-cmd="random" title="random channel: \ or r or ⌥\">RANDOM</button><button data-cmd="surf" id="surfBtn" title="surf: next channel every 30 s, 1, 3, 5, 15, 30, 60 min, then off: w">SURF</button><button data-cmd="toggle" title="hide / show the player: space">HIDE</button>
+    <button data-cmd="voldown" title="volume down: - or ⌥-">VOL −</button><button data-cmd="volup" title="volume up: = or ⌥=">VOL +</button>
+    <button data-cmd="pip" title="mini player on this screen: p">PIP</button><button data-cmd="max" title="maximize / restore the player: f">MAX</button><button data-cmd="stop" title="player off: X or ⌥0">OFF</button>
+    <button id="castBtn" class="wide" title="cast to a receiver: C" hidden>CAST ▸</button>
   </div>
   <div class="chans" id="castList" hidden></div>
   <input id="cq" placeholder="FIND A CHANNEL…" autocomplete="off" spellcheck="false">
@@ -198,6 +200,7 @@ app.person = (name, w) => {
   if (row.nextElementSibling && row.nextElementSibling.classList.contains("bio")) row.nextElementSibling.remove();
   row.after(el("p", "dim bio", (w && w.extract) || "NOTHING ON WIKIPEDIA"));
 };
+app.surf = (label, on) => { const b = $("surfBtn"); b.textContent = label; b.classList.toggle("on", on); };
 app.now = (s) => { $("now").textContent = s || ""; };
 
 app.vibe = (v, chNames, trophies) => {
@@ -467,7 +470,7 @@ const KEYS = {
   t: () => switchTab("tv"), c: () => switchTab("club"), v: () => switchTab("vhs"),
   H: () => switchTab(TABS[(TABS.indexOf(curTab()) + TABS.length - 1) % TABS.length]), L: () => switchTab(TABS[(TABS.indexOf(curTab()) + 1) % TABS.length]),
   x: () => switchTab("xray"),
-  "]": () => remote("up"), "[": () => remote("down"), r: () => remote("random"), " ": () => remote("toggle"),
+  "]": () => remote("up"), "[": () => remote("down"), r: () => remote("random"), "\\": () => remote("random"), f: () => remote("max"), w: () => remote("surf"), " ": () => remote("toggle"),
   "=": () => remote("volup"), "+": () => remote("volup"), p: () => remote("pip"), X: () => remote("stop"),
   C: () => { if (view() === "tv") toggleCast(); },
   q: () => send({ act: "close" }), "?": () => { $("help").hidden = !$("help").hidden; },
@@ -486,6 +489,8 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (typing) {
+    // opt-9 opens with search focused: backslash on an empty box is a remote, never text.
+    if (e.key === "\\" && !e.target.value && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); remote("random"); return; }
     // Enter or ctrl-n/p from the search box: leave it and move or pick.
     // Enter in "find a channel" plays the highlighted row and closes the finder.
     if (e.key === "Enter") {
@@ -522,6 +527,19 @@ document.addEventListener("keydown", (e) => {
 new MutationObserver(() => markSel(false)).observe(document.body, { childList: true, subtree: true });
 $("q").addEventListener("input", () => { sel.shelf = 0; });
 $("cq").addEventListener("input", () => { sel.tv = 0; });
+// Tooltips: the web view never shows native title tooltips, so draw them.
+const tipEl = document.body.appendChild(Object.assign(document.createElement("div"), { id: "tip", hidden: true }));
+document.addEventListener("mouseover", (e) => {
+  const b = e.target.closest("[title],[data-tip]");
+  if (b && b.title) { b.dataset.tip = b.title; b.removeAttribute("title"); }
+  if (!b || !b.dataset.tip) { tipEl.hidden = true; return; }
+  tipEl.textContent = b.dataset.tip; tipEl.hidden = false;
+  const r = b.getBoundingClientRect();
+  tipEl.style.left = Math.max(2, Math.min(r.left, innerWidth - tipEl.offsetWidth - 2)) + "px";
+  tipEl.style.top = (r.top - tipEl.offsetHeight - 4 < 0 ? r.bottom + 4 : r.top - tipEl.offsetHeight - 4) + "px";
+});
+document.addEventListener("mouseleave", () => { tipEl.hidden = true; });
+document.addEventListener("mousedown", () => { tipEl.hidden = true; });
 send({ act: "ready" });
 </script>
 </body></html>
