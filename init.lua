@@ -807,7 +807,7 @@ end
 local W, H = 340, 540
 local function dock()
   if not panel then return end
-  if panelSet and not panel:frame():equals(panelSet) then return end -- dragged: leave it
+  if panelSet and not hs.geometry.rect(panel:frame()):equals(panelSet) then return end -- dragged: leave it
   local st = M.state()
   local scr = hs.mouse.getCurrentScreen() or hs.screen.mainScreen()
   local f
