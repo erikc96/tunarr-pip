@@ -877,6 +877,20 @@ function M.panel(tab)
   dock()
   panel:show()
   focusPanel()
+  -- The preloaded page can go blank (WebKit drops the content process of a
+  -- long-hidden webview); if it doesn't answer a ping, rebuild it.
+  if panelReady then
+    local pong = false
+    panel:evaluateJavaScript('1', function() pong = true end)
+    hs.timer.doAfter(1, function()
+      if pong or not panel then return end
+      panel:delete()
+      makePanel()
+      dock()
+      panel:show()
+      focusPanel()
+    end)
+  end
   js('tab', J(tab))
   if shelfCache then pushShelves() end
   panelPush()
