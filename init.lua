@@ -12,7 +12,7 @@
 -- opt-shift-v    the Fuzz panel's VHS store: pick a Plex movie or episode
 -- opt-shift-n    start what the live channel is showing as a VHS tape, from the top
 --
--- With tvUrl/tvUser set (a craigo.art/tv account), the player also counts as
+-- With tvUrl/tvUser set (a tv.craigoslist.com/tv account), the player also counts as
 -- watching there: it posts a beat every minute a channel or tape really plays,
 -- which feeds streaks, trophies and Fuzz, the mascot. Fuzz lives in the menu
 -- bar; clicking it opens the Fuzz panel (panel.html) beside the PiP.
@@ -52,7 +52,7 @@ M.config = {
   warmMinutes = 15,
   mpv = nil,       -- default: Homebrew's mpv (Apple silicon or Intel)
   fzf = nil,       -- default: Homebrew's fzf; ranks the panel's channel search
-  tvUrl = nil,     -- craigo.art/tv style site, e.g. 'https://craigo.art/tv'; enables the club and VHS
+  tvUrl = nil,     -- tv.craigoslist.com/tv style site, e.g. 'https://tv.craigoslist.com/tv'; enables the club and VHS
   tvUser = nil,    -- its login; password in the Keychain (service 'craigo-tv')
   vhsKey = { { 'alt', 'shift' }, 'v' }, -- opt-shift-v (another app often owns opt-v)
   vhsNowKey = { { 'alt', 'shift' }, 'n' }, -- start what's on now as a tape, from the top
@@ -66,8 +66,8 @@ local SOCKET = '/tmp/tunarr-pip.sock'
 local DIR = debug.getinfo(1, 'S').source:match('^@(.*)/') -- this repo's folder
 
 local AUTH, HEADERS -- set by setup()
-local TVPW, COOKIE -- craigo.art/tv password and session cookie
--- Casting to a craigo.art/tv receiver page (?cast=<name>, e.g. an iPad): while castWeb holds the
+local TVPW, COOKIE -- tv.craigoslist.com/tv password and session cookie
+-- Casting to a tv.craigoslist.com/tv receiver page (?cast=<name>, e.g. an iPad): while castWeb holds the
 -- receiver's name, the channel, volume and off keys drive that page instead of mpv. castCmd is set
 -- once tv() exists.
 local castWeb, castCmd = false, nil
@@ -93,7 +93,7 @@ local tape = nil       -- VHS tape playing: { key, title, duration, sid, pos }
 local names = {}       -- channel number -> name
 
 -- What the player loads: a Tunarr channel (basic auth) or a VHS tape (the
--- craigo.art/tv session cookie). Each source only gets its own credential.
+-- tv.craigoslist.com/tv session cookie). Each source only gets its own credential.
 local function chanSrc(n)
   if M.config.streamViaTv and COOKIE then
     return { channel = n, title = 'Tunarr ch' .. n, header = 'Cookie: ' .. COOKIE,
@@ -451,7 +451,7 @@ function M.pick()
 end
 
 --------------------------------
--- craigo.art/tv: login, watch beats, Fuzz and the clubhouse
+-- tv.craigoslist.com/tv: login, watch beats, Fuzz and the clubhouse
 --------------------------------
 local TROPHIES = { -- id, name, how (same list as the site)
   { 'first_tune', 'FIRST TUNE', 'watch anything' },
@@ -480,7 +480,7 @@ local function login(fn)
         if k:lower() == 'set-cookie' then COOKIE = tostring(v):match('(tv_session=[^;]+)') end
       end
       if status ~= 200 or not COOKIE then
-        hs.alert.show('craigo.art/tv: login failed (HTTP ' .. tostring(status) .. ')')
+        hs.alert.show('tv.craigoslist.com/tv: login failed (HTTP ' .. tostring(status) .. ')')
       end
       fn(COOKIE ~= nil)
     end, 'ignoreLocalCache')
@@ -523,7 +523,7 @@ castCmd = function(cmd, ch)
   end)
 end
 
--- Cast to the craigo.art/tv receiver named rx (tvUrl/?cast=<rx>; default 'ipad'). With none open,
+-- Cast to the tv.craigoslist.com/tv receiver named rx (tvUrl/?cast=<rx>; default 'ipad'). With none open,
 -- push wakeTopic (that device's "Tunarr Receiver" shortcut opens the page) and keep checking for a minute.
 local castTry = nil
 function M.castWeb(rx, wakeTopic)
@@ -1090,7 +1090,7 @@ end
 function M.playTape(t)
   tv('GET', 'me', nil, function(status) -- makes sure the session cookie is fresh
     if status ~= 200 then
-      hs.alert.show('craigo.art/tv: not logged in (HTTP ' .. tostring(status) .. ')')
+      hs.alert.show('tv.craigoslist.com/tv: not logged in (HTTP ' .. tostring(status) .. ')')
       return
     end
     local sid = newSid()
@@ -1230,7 +1230,7 @@ end
 -- X-Ray over the PiP: while the mouse rests on the player, what's on (title, facts, summary,
 -- cast) draws on top of the picture. A canvas, so clicks and drags still reach mpv.
 local xrayCv, xrayData, xrayFor, xrayStop, xrayFrame, xrayFrameAt = nil, nil, nil, 0, nil, 0
--- Styled like craigo.art/tv's channel banner: VT323, white on the blue box, amber accents.
+-- Styled like tv.craigoslist.com/tv's channel banner: VT323, white on the blue box, amber accents.
 local WHITE, AMBER, DIM = { white = 1 }, { red = 1, green = .7, blue = .28 }, { white = 1, alpha = .75 }
 -- Returns the styled text and its estimated wrapped height for a box availW wide (canvas text can't
 -- report that), so the wheel knows how far it may scroll.

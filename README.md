@@ -12,12 +12,12 @@ It's a [Hammerspoon](https://www.hammerspoon.org) module that drives [mpv](https
 | **⌥]** / **⌥[** | Channel up / down (goes back to the start after the last channel) |
 | **⌥\\** | Random channel |
 | **⌥=** / **⌥-** | Volume up / down |
-| **⌥9** | Find a channel: type to search (ranked by fzf) the list of channels and what's on each right now. With a craigo.art/tv account it opens in the Fuzz panel's TV tab |
+| **⌥9** | Find a channel: type to search (ranked by fzf) the list of channels and what's on each right now. With a tv.craigoslist.com/tv account it opens in the Fuzz panel's TV tab |
 | **⌥0** | Turn it off |
-| **⌥⇧V** | VHS store in the Fuzz panel (needs a craigo.art/tv account, see below) |
-| **⌥⇧N** | Start what the live channel is showing as a VHS tape, from the beginning (needs a craigo.art/tv account) |
+| **⌥⇧V** | VHS store in the Fuzz panel (needs a tv.craigoslist.com/tv account, see below) |
+| **⌥⇧N** | Start what the live channel is showing as a VHS tape, from the beginning (needs a tv.craigoslist.com/tv account) |
 
-Inside the player you can use mpv's own keys: **m** mutes, **9**/**0** change the volume, **f** goes fullscreen. You can drag the player to move it. With a craigo.art/tv account, moving the mouse over the player shows an X-Ray banner (what's on, cast), and clicking it opens the Fuzz panel's X-RAY tab.
+Inside the player you can use mpv's own keys: **m** mutes, **9**/**0** change the volume, **f** goes fullscreen. You can drag the player to move it. With a tv.craigoslist.com/tv account, moving the mouse over the player shows an X-Ray banner (what's on, cast), and clicking it opens the Fuzz panel's X-RAY tab.
 
 A channel takes 3–4 seconds to start. Static fills the player while it loads, and whenever the stream stalls. A hidden player keeps the stream running (muted) for 15 minutes, so bringing it back within that time is instant.
 
@@ -85,9 +85,9 @@ tunarrPip = require('tunarr_pip').setup({
 
 Hammerspoon takes over the keys, so while it runs **⌥[**, **⌥]** and **⌥\\** no longer type “ ‘ «, and **⌥0–9** no longer type º¡™£¢∞§¶•ª. If you type any of those, move the player to other keys as shown above. Set a key to `nil` to turn it off.
 
-## craigo.art/tv club and VHS (optional)
+## tv.craigoslist.com/tv club and VHS (optional)
 
-If you have a [craigo.art/tv](https://craigo.art/tv/) account, the player can count as watching there too:
+If you have a [tv.craigoslist.com/tv](https://tv.craigoslist.com/tv/) account, the player can count as watching there too:
 
 - **Fuzz in the menu bar.** The mascot's face shows its mood (dancing, fed, peckish, hungry, sad, static) and the number next to it is your streak. Click it to open the Fuzz panel.
 - **The Fuzz panel** has four tabs. TV is a remote (channel up/down, random, surf, hide/show, volume, mini player, MAX, off, PLAY IN VHS, cast) above every channel with what's on now (click one to tune). It docks beside the player (or in its corner when nothing's playing) and floats over other windows. CLUB has Fuzz (click to pet), your streak, today's minutes, the squad streak, who's on now (click a channel to join), friends, weekly awards, top channels and trophies. X-RAY has the cast, crew and Wikipedia summary for what's on here or on the cast receiver. Drag it somewhere else and it stays there until you close it. Esc closes it.
@@ -96,7 +96,7 @@ If you have a [craigo.art/tv](https://craigo.art/tv/) account, the player can co
 
 **Keys in the panel** (vim style; press **?** in the panel for this list): **j/k** move over anything clickable, **h/l** move across the VHS shelf (**h** backs out of a show), **gg/G** top and bottom, **Ctrl-d/u/f/b** page, **Enter**/**o** play or open, **/** search (Esc leaves the box, Ctrl-n/p move from it; **\\** on an empty search is random), **t/c/v/x** or **H/L**/**gt/gT** tabs, **`<`/`>`** VHS shelves, **]/[** channel up/down, **r** or **\\** random, **w** surf, **space** hide/show, **=/-** volume, **n** play what's on now as a tape, **f** maximize/restore the player, **p** mini player, **C** cast, **X** off, **q**/**Esc** close.
 
-Save your craigo.art/tv password in the Keychain:
+Save your tv.craigoslist.com/tv password in the Keychain:
 
 ```sh
 security add-generic-password -s craigo-tv -a YOUR_TV_USERNAME -w
@@ -105,13 +105,13 @@ security add-generic-password -s craigo-tv -a YOUR_TV_USERNAME -w
 and add two lines to `setup({...})`:
 
 ```lua
-  tvUrl = 'https://craigo.art/tv',
+  tvUrl = 'https://tv.craigoslist.com/tv',
   tvUser = 'YOUR_TV_USERNAME',
 ```
 
 ## Watching on a TV
 
-The same channels play in a browser at [craigo.art/tv](https://craigo.art/tv/) (with an account), including on an Amazon Fire TV Stick in Fully Kiosk Browser. That page isn't part of this repo; ask whoever runs your server for its help pages.
+The same channels play in a browser at [tv.craigoslist.com/tv](https://tv.craigoslist.com/tv/) (with an account), including on an Amazon Fire TV Stick in Fully Kiosk Browser. That page isn't part of this repo; ask whoever runs your server for its help pages.
 
 ## Updating
 

@@ -123,7 +123,7 @@ const mins = (s) => `${Math.round((s || 0) / 60)} MIN`;
 const days = (n) => `${n} DAY${n === 1 ? "" : "S"}`;
 const clock = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`; };
 
-// Same pixel art and lists as craigo.art/tv.
+// Same pixel art and lists as tv.craigoslist.com/tv.
 const FUZZ_BASE = ["..#....#..", "...#..#...", "..######..", ".########.", "", ".########.", "", "", "..##..##.."];
 const FUZZ = {
   watching: [".#k####k#.", ".#k####k#.", "..#kkkk#.."], happy: [".#k####k#.", ".##k##k##.", "..##kk##.."],
@@ -166,7 +166,7 @@ app.tab = (t) => {
   if (t === "xray") send({ act: "xray" });
 };
 
-// ---- X-Ray: what's on, from Plex and Wikipedia (craigo.art/tv api xray/<n>) ----
+// ---- X-Ray: what's on, from Plex and Wikipedia (tv.craigoslist.com/tv api xray/<n>) ----
 app.xray = (x) => {
   const box = $("xray"), keep = box.scrollTop;
   box.textContent = "";
