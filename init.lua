@@ -57,6 +57,8 @@ M.config = {
   vhsKey = { { 'alt', 'shift' }, 'v' }, -- opt-shift-v (another app often owns opt-v)
   vhsNowKey = { { 'alt', 'shift' }, 'n' }, -- start what's on now as a tape, from the top
   menubar = true,  -- Fuzz in the menu bar (needs tvUrl)
+  streamViaTv = false, -- play channels through tvUrl (/api/stream, session cookie) when logged in: a
+                       -- Cloudflare path that beats a bad direct route to the Tunarr host
   cast = {},       -- the panel's CAST list: { { name = 'IPAD', run = function() ... end }, ... }
 }
 
@@ -93,6 +95,10 @@ local names = {}       -- channel number -> name
 -- What the player loads: a Tunarr channel (basic auth) or a VHS tape (the
 -- craigo.art/tv session cookie). Each source only gets its own credential.
 local function chanSrc(n)
+  if M.config.streamViaTv and COOKIE then
+    return { channel = n, title = 'Tunarr ch' .. n, header = 'Cookie: ' .. COOKIE,
+      url = string.format('%s/api/stream/%d', M.config.tvUrl, n) }
+  end
   return { channel = n, title = 'Tunarr ch' .. n, header = 'Authorization: ' .. AUTH,
     url = string.format('%s/stream/channels/%d.ts', M.config.baseUrl, n) }
 end
@@ -235,6 +241,10 @@ local function start(src)
     '--fs-screen=' .. (fullScreen and screenIndex(fullScreen) or 'current'),
     '--hwdec=videotoolbox',
     '--profile=low-latency',
+    -- low-latency turns the cache off, so any network jitter stalls playback.
+    -- Buffer a few seconds back (and pause-for-cache, which drives the static).
+    '--cache=yes', '--cache-pause=yes', '--cache-pause-wait=3',
+    '--demuxer-readahead-secs=8',
     '--demuxer-lavf-analyzeduration=0.5',
     '--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5',
     '--input-ipc-server=' .. SOCKET,
