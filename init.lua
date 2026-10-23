@@ -870,6 +870,28 @@ local function panelVisible()
   return panel ~= nil and panel:isVisible()
 end
 
+-- The preloaded page can go blank (WebKit drops the content process of a
+-- long-hidden webview, or the page never finishes loading). A moment after it
+-- opens, probe the DOM; if the probe doesn't answer true, rebuild and retry.
+local findPending = false
+local findWanted = false -- opt-9 asked for "find a channel" and the page hasn't confirmed ready yet
+local healPanel
+healPanel = function(tries)
+  local p = panel
+  local ok = false
+  p:evaluateJavaScript("typeof app==='object' && document.body && document.body.innerText.length>0", function(r) ok = r == true end)
+  hs.timer.doAfter(1.5, function()
+    if ok or panel ~= p or not panelVisible() then return end
+    p:delete()
+    makePanel()
+    findPending = findWanted
+    dock()
+    panel:show()
+    focusPanel()
+    if tries > 1 then healPanel(tries - 1) end
+  end)
+end
+
 -- Open the panel on a tab ('club' or 'vhs'); the same call again closes it.
 function M.panel(tab)
   if not tvOn() then
@@ -887,20 +909,7 @@ function M.panel(tab)
   dock()
   panel:show()
   focusPanel()
-  -- The preloaded page can go blank (WebKit drops the content process of a
-  -- long-hidden webview); if it doesn't answer a ping, rebuild it.
-  if panelReady then
-    local pong = false
-    panel:evaluateJavaScript('1', function() pong = true end)
-    hs.timer.doAfter(1, function()
-      if pong or not panel then return end
-      panel:delete()
-      makePanel()
-      dock()
-      panel:show()
-      focusPanel()
-    end)
-  end
+  healPanel(2)
   js('tab', J(tab))
   if shelfCache then pushShelves() end
   panelPush()
@@ -910,7 +919,6 @@ end
 function M.vhs() M.panel('vhs') end
 
 -- opt-9: the TV tab with "find a channel" focused; again hides it. False without tvUrl.
-local findPending = false
 function M.find()
   if not tvOn() then return false end
   M.refreshReceivers()
@@ -919,6 +927,7 @@ function M.find()
     return true
   end
   M.panel('tv')
+  findWanted = true
   findPending = not panelReady -- a new panel focuses it once it's ready
   js('find')
   return true
@@ -1010,6 +1019,7 @@ local REMOTE = {
 onMessage = function(m)
   if m.act == 'ready' then
     panelReady = true
+    findWanted = false
     js('tab', J(panelTab))
     if findPending then findPending = false; js('find') end
     local casts = {}
