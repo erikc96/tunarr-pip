@@ -97,10 +97,10 @@ local names = {}       -- channel number -> name
 local function chanSrc(n)
   if M.config.streamViaTv and COOKIE then
     return { channel = n, title = 'Tunarr ch' .. n, header = 'Cookie: ' .. COOKIE,
-      url = string.format('%s/api/stream/%d', M.config.tvUrl, n) }
+      url = string.format('%s/api/stream/%d?size=pip', M.config.tvUrl, n) }
   end
   return { channel = n, title = 'Tunarr ch' .. n, header = 'Authorization: ' .. AUTH,
-    url = string.format('%s/stream/channels/%d.ts', M.config.baseUrl, n) }
+    url = string.format('%s/stream/channels/%d.ts?size=pip', M.config.baseUrl, n) }
 end
 
 local function running()
@@ -265,7 +265,16 @@ local function start(src)
     unbeat()
     task, current, hidden, fullScreen = nil, nil, false, nil
     if exitCode ~= 0 and not stopping then
-      hs.alert.show('Tunarr PiP: stream ended (' .. tostring(exitCode) .. ')')
+      -- A 503 means Tunarr is out of transcode capacity: say so, retry in 5 s.
+      local ch, header = src.channel, src.header
+      hs.task.new('/usr/bin/curl', function(_, out)
+        if (out or ''):match('503') and ch and not src.tape then
+          hs.alert.show('Channel busy, retrying…', 3)
+          hs.timer.doAfter(5, function() if not task then M.play(ch) end end)
+        else
+          hs.alert.show('Tunarr PiP: stream ended (' .. tostring(exitCode) .. ')')
+        end
+      end, { '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '4', '-H', header, src.url }):start()
     end
     stopping = false
   end, args)
