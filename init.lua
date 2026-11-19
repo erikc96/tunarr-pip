@@ -1342,6 +1342,30 @@ local xrayWheel = hs.eventtap.new({ hs.eventtap.event.types.scrollWheel }, funct
 end):start()
 M.xrayHover = xrayHover -- for debugging/tests
 
+-- A missing Keychain item turns hotkeys off; say so where it lasts, not in an 8-second banner.
+-- Notification stays until clicked (withdrawAfter 0); one dated line goes to the log file.
+local function keyName(k)
+  if type(k) == 'table' then
+    local m = {}
+    for _, x in ipairs(k[1]) do m[#m + 1] = (x == 'alt' and 'Opt' or x:gsub('^%l', string.upper)) end
+    return table.concat(m, '+') .. '+' .. k[2]
+  end
+  return k and ('Opt+' .. k) or '?'
+end
+
+local function loudFail(service, account, off)
+  local msg = string.format("Keychain item '%s' (account %s) is missing, so %s are off. See the README.",
+    service, account, off)
+  hs.printf('tunarr_pip: %s', msg)
+  local dir = os.getenv('HOME') .. '/.local/state/tunarr-pip'
+  hs.execute("/bin/mkdir -p '" .. dir .. "'")
+  local f = io.open(dir .. '/tunarr-pip.log', 'a')
+  if f then f:write(os.date('%Y-%m-%d %H:%M:%S '), msg, '\n'); f:close() end
+  hs.notify.new({ title = 'Tunarr PiP: keys are off', informativeText = msg, withdrawAfter = 0 }):send()
+  hs.alert.show('Tunarr PiP: ' .. msg, 8)
+  return msg
+end
+
 function M.setup(opts)
   local c = M.config
   for k, v in pairs(opts or {}) do c[k] = v end
@@ -1354,7 +1378,9 @@ function M.setup(opts)
   local pw, ok = hs.execute(string.format(
     "/usr/bin/security find-generic-password -s tunarr-pip -a '%s' -w", c.user))
   if not ok then
-    hs.alert.show('Tunarr PiP: no Keychain password for ' .. c.user .. ' (see README)', 8)
+    local msg = loudFail('tunarr-pip', c.user, string.format('the picker (%s), the channel keys and the stop key (%s)',
+      keyName(c.pickerKey), keyName(c.stopKey)))
+    bind(c.pickerKey, function() hs.alert.show('Tunarr PiP: ' .. msg, 8) end) -- not a silent key
     return M
   end
   AUTH = 'Basic ' .. hs.base64.encode(c.user .. ':' .. pw:gsub('%s+$', ''))
@@ -1400,7 +1426,7 @@ function M.setup(opts)
       M.refreshReceivers()
       M.receiverTimer = hs.timer.doEvery(15, M.refreshReceivers)
     else
-      hs.alert.show('Tunarr PiP: no Keychain password for craigo-tv ' .. c.tvUser .. ' (see README)', 8)
+      loudFail('craigo-tv', c.tvUser, string.format('the VHS keys (%s, %s), the Fuzz menu bar item and the panel', keyName(c.vhsKey), keyName(c.vhsNowKey)))
     end
   end
 
