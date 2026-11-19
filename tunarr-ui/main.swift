@@ -78,7 +78,35 @@ final class FuzzPanel: NSPanel {
     override func orderOut(_ sender: Any?) { super.orderOut(sender); onVisibilityChanged?() }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, NSWindowDelegate {
+/// Server-sent-events client for /events. Only `ui` events matter here ({open,tab,find} | {close}).
+final class UIEvents: NSObject, URLSessionDataDelegate {
+    var onUI: (([String: Any]) -> Void)?
+    var request: URLRequest
+    var buffer = ""
+    var event = ""
+    var session: URLSession!
+    init(request: URLRequest) {
+        self.request = request
+        super.init()
+        session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main)
+    }
+    func start() { buffer = ""; event = ""; session.dataTask(with: request).resume() }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        buffer += String(decoding: data, as: UTF8.self)
+        while let range = buffer.range(of: "\n") {
+            let line = String(buffer[buffer.startIndex..<range.lowerBound]); buffer.removeSubrange(buffer.startIndex...range.lowerBound)
+            if line.hasPrefix("event:") { event = line.dropFirst(6).trimmingCharacters(in: .whitespaces) }
+            else if line.hasPrefix("data:"), event == "ui",
+                    let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any] { onUI?(object) }
+            else if line.isEmpty { event = "" }
+        }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.start() }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, NSWindowDelegate, WKScriptMessageHandler {
     let configDir: URL
     let port: Int
     let token: String
@@ -98,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var mood = "ok"
     var idle = 0
     var live: [Live] = []
+    var events: UIEvents?
 
     override init() {
         let path = ProcessInfo.processInfo.environment["TUNARRD_DIR"] ?? (NSHomeDirectory() + "/Library/Application Support/tunarr-pip")
@@ -116,6 +145,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stateTimer = Timer.scheduledTimer(timeInterval: 10, target: self, selector: #selector(fetchState), userInfo: nil, repeats: true)
         probeTimer = Timer.scheduledTimer(timeInterval: 2, target: self, selector: #selector(probeWebView), userInfo: nil, repeats: true)
         fetchState()
+        events = UIEvents(request: request("events"))
+        events?.onUI = { [weak self] message in self?.handleUI(message) }
+        events?.start()
+    }
+
+    func handleUI(_ message: [String: Any]) {
+        if message["close"] as? Bool == true { panel.orderOut(nil) }
+        else if message["open"] as? Bool == true, !panel.isVisible { togglePanel() }
+    }
+
+    /// The page posts {act:"close"} to `webkit.messageHandlers.fuzz` (panel.html close button / Esc).
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        if let body = message.body as? [String: Any], body["act"] as? String == "close" { panel.orderOut(nil) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -137,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false; panel.delegate = self
         panel.onVisibilityChanged = { [weak self] in self?.sendWindowReport() }
         let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(self, name: "fuzz")
         webView = WKWebView(frame: panel.contentView!.bounds, configuration: configuration)
         webView.autoresizingMask = [.width, .height]; webView.navigationDelegate = self
         panel.contentView?.addSubview(webView)
