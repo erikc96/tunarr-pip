@@ -56,7 +56,7 @@ class T(unittest.TestCase):
   for _ in range(30):
    if len(self.cmds())>=7:break
    time.sleep(.05)
-  self.assertEqual(self.cmds()[:7],[['set_property','window-minimized',False],['set_property','mute',False],['change-list','http-header-fields','set','Authorization: Basic test'],['set_property','start','none'],['set_property','pause',False],['loadfile','av://lavfi:testsrc=size=640x360:rate=10','replace'],['set_property','title','Tunarr ch5']])
+  self.assertEqual([c for c in self.cmds() if c[0]!='script-message-to'][:7],[['set_property','window-minimized',False],['set_property','mute',False],['change-list','http-header-fields','set','Authorization: Basic test'],['set_property','start','none'],['set_property','pause',False],['loadfile','av://lavfi:testsrc=size=640x360:rate=10','replace'],['set_property','title','Tunarr ch5']])
   self.req('/cmd',{'cmd':'play','ch':5});self.req('/cmd',{'cmd':'play','ch':5});self.req('/cmd',{'cmd':'stop'});time.sleep(.3)
   c=self.cmds();self.assertIn(['set_property','mute',True],c);self.assertIn(['set_property','window-minimized',True],c);self.assertIn(['set_property','window-minimized',False],c);self.assertIn(['set_property','mute',False],c);self.assertEqual(c[-1],['quit'])
  def test_step_random_state_events_warm_and_singleton(self):
@@ -74,9 +74,9 @@ class T(unittest.TestCase):
   for x in range(8): self.req('/window',{'frame':{'x':x,'y':2,'w':3,'h':4},'onscreen':True})
   time.sleep(.35);done.set();t.join();self.assertFalse(bad);self.assertEqual(json.loads((self.d/'cfg/state.json').read_text())['frame']['x'],7)
   env=os.environ.copy();env['TUNARRD_DIR']=str(self.d/'other'); q=subprocess.run([PY,str(ROOT/'tunarrd/tunarrd.py')],env=env,capture_output=True,timeout=2);self.assertEqual(q.returncode,0)
-  # Two clients reserve the SSE slots; the third is refused.
+  # Four clients reserve the SSE slots; the fifth is refused.
   import urllib.request
-  a=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);b=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);self.assertEqual(self.req('/events').status,429);a.close();b.close()
+  a=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);b=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);c=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);e=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);self.assertEqual(self.req('/events').status,429);a.close();b.close();c.close();e.close()
   self.req('/cmd',{'cmd':'play','ch':st['channel']});time.sleep(1.5);self.assertIn(['quit'],self.cmds())
 
  def test_heartbeat_sigterm_and_dead_mpv(self):

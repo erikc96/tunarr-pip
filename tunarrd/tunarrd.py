@@ -4,15 +4,17 @@ import base64, fcntl, json, os, queue, random, secrets, signal, subprocess, sys,
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
-from urllib.error import HTTPError
+from urllib.parse import parse_qs, quote, urlparse
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from mpvctl import MPV
 from store import PositionStore
 from tvsite import TvSite
+from bus import Bus
 
 DEFAULT = {'baseUrl': None, 'user': None, 'streamViaTv': False, 'width':480, 'height':270,
-           'margin':16, 'warmMinutes':15, 'volStep':5, 'mpv':'/opt/homebrew/bin/mpv'}
+           'margin':16, 'warmMinutes':15, 'volStep':5, 'mpv':'/opt/homebrew/bin/mpv',
+           'fzf':'/opt/homebrew/bin/fzf', 'evalEnabled':False}
 
 class Daemon:
  def __init__(self):
@@ -27,7 +29,8 @@ class Daemon:
   self.tv=TvSite(self.config['tvUrl'],self.config['tvUser'],self.tv_password) if self.config.get('tvUrl') and self.config.get('tvUser') and self.tv_password else None
   self.store=PositionStore(self.dir); self.tape=None; self.vibe=None; self.vibe_raw=None; self.receivers=[]; self.cast_to=None; self.cast_ch=None; self.active_rx=None; self.cast_topics={}; self.beating=False; self.last_beat=0; self.last_vibe=0; self.last_receivers=0; self.last_canary=0; self.pool=ThreadPoolExecutor(max_workers=3)
   self.q=queue.Queue(); self.stop_event=threading.Event(); self.warm=None; self.channels=None; self.channels_at=0; self.channel=None; self.last=None
-  self.hidden=False; self.screen=None; self.fullscreen=False; self.frame=None; self.state_lock=threading.Lock(); self.last_write=0; self.write_timer=None
+  self.hidden=False; self.screen=None; self.fullscreen=False; self.frame=None; self.panel={'frame':None,'visible':False}; self.panelTab='tv'; self.state_lock=threading.Lock(); self.last_write=0; self.write_timer=None
+  self.bus=Bus(); self.shelf_cache=None; self.shelf_at=0; self.by_key={}; self.cover_cache={}; self.surf_level=0; self.surf_timer=None; self.xray_cache=None; self.xray_loading=False
   self.events=0; self.events_lock=threading.Lock(); self.mpv=MPV(self.config['mpv'],self.sock,self._mpv_exit,self._mpv_event)
   self._write_state(True)
  def _token(self):
@@ -48,7 +51,8 @@ class Daemon:
   try: return float(subprocess.check_output(['/usr/bin/osascript','-l','JavaScript','-e','ObjC.import("AppKit");$.NSScreen.mainScreen.backingScaleFactor'],stderr=subprocess.DEVNULL).decode())
   except Exception: return 2
  def _state(self):
-  return {'pid':self.mpv.pid,'frame':self.frame,'hidden':self.hidden,'screen':self.screen,'panel':{'frame':None,'visible':False,'tab':'tv'},'pickerVisible':False,'ts':time.time(),'vibe':self.vibe,'receivers':self.receivers,'cast':self.cast_to,'trophy':getattr(self,'trophy',None)}
+  panel=getattr(self,'panel',{'frame':None,'visible':False}) | {'tab':getattr(self,'panelTab','tv')}
+  return {'pid':self.mpv.pid,'frame':self.frame,'hidden':self.hidden,'screen':self.screen,'panel':panel,'pickerVisible':bool(panel.get('visible') and self.panelTab=='tv'),'ts':time.time(),'vibe':self.vibe,'receivers':self.receivers,'cast':self.cast_to,'trophy':getattr(self,'trophy',None)}
  def _write_state(self, now=False):
   with self.state_lock:
    delay=.25-(time.monotonic()-self.last_write)
@@ -63,6 +67,7 @@ class Daemon:
   self.channel=None; self.hidden=False; self.screen=None; self.fullscreen=False; self._write_state()
  def _mpv_event(self,event):
   if event.get('event')=='end-file' and event.get('reason')=='eof': self.end_tape(True)
+  if event.get('event')=='client-message': self._mpv_message(event.get('args') or [])
  def _heartbeat(self):
   # tunarr_keys.lua treats a state.json older than 15 s as a dead player: refresh it while mpv exists.
   every=float(os.environ.get('TUNARRD_HEARTBEAT','5'))
@@ -111,12 +116,12 @@ class Daemon:
    self.show(); h=f'Authorization: {self.auth or ""}'; self.mpv.command(['change-list','http-header-fields','set',h]); self.mpv.command(['set_property','start','none']); self.mpv.command(['set_property','pause',False]); self.mpv.command(['loadfile',self.source(n),'replace']); self.mpv.command(['set_property','title',f'Tunarr ch{n}']); self.channel=n
   elif self.hidden: self.show()
   else: self.hide()
-  self._write_state()
+  self.mpv.command(['script-message-to','xray','enable','0' if self.hidden else '1']); self._write_state()
  def hide(self):
-  self.mpv.command(['set_property','pause',True] if self.tape else ['set_property','mute',True]); self.mpv.command(['set_property','window-minimized',True]); self.hidden=True; self._cancel_warm(); self.warm=threading.Timer(float(self.config['warmMinutes'])*60,self.stop); self.warm.daemon=True; self.warm.start(); self.pool.submit(self.unbeat); self._write_state()
+  self.mpv.command(['set_property','pause',True] if self.tape else ['set_property','mute',True]); self.mpv.command(['set_property','window-minimized',True]); self.mpv.command(['script-message-to','xray','enable','0']); self.hidden=True; self._cancel_warm(); self.warm=threading.Timer(float(self.config['warmMinutes'])*60,self.stop); self.warm.daemon=True; self.warm.start(); self.pool.submit(self.unbeat); self._write_state()
  def show(self):
-  self._cancel_warm(); self.mpv.command(['set_property','window-minimized',False]); self.mpv.command(['set_property','pause',False] if self.tape else ['set_property','mute',False]); self.hidden=False; self._write_state()
- def stop(self): self._cancel_warm(); self.end_tape(); self.pool.submit(self.unbeat); self.mpv.stop(); self.channel=None; self.hidden=False; self.screen=None; self.fullscreen=False; self._write_state()
+  self._cancel_warm(); self.mpv.command(['set_property','window-minimized',False]); self.mpv.command(['set_property','pause',False] if self.tape else ['set_property','mute',False]); self.mpv.command(['script-message-to','xray','enable','1']); self.hidden=False; self._write_state()
+ def stop(self): self._cancel_warm(); self.end_tape(); self.pool.submit(self.unbeat); self.mpv.command(['script-message-to','xray','enable','0']); self.mpv.stop(); self.channel=None; self.hidden=False; self.screen=None; self.fullscreen=False; self._write_state()
  def play_tape(self,x):
   if not self.tv:return
   if self.tv.request('GET','/api/me')[0]!=200:return
@@ -241,6 +246,107 @@ class Daemon:
   n=x.get('ch') or self.last or self._channels()[0]; self.screen=x.get('screen'); self.fullscreen=True
   if not self.mpv.pid: self.play(n)
   else: self.play(n) if self.channel!=n else self.show(); self.mpv.command(['set_property','fullscreen',False]); self.mpv.command(['set_property','fs-screen-name',self.screen]); self.mpv.command(['set_property','fullscreen',True]); self._write_state()
+ def emit(self, verb, *args): self.bus.emit(verb, *args)
+ def _remote_sync(self):
+  self.emit('now', self._now_text()); self.emit('current', self.channel or False, self.hidden); self._surf_sync()
+ def _now_text(self):
+  return ('CH %s' % self.channel) if self.channel is not None else ('VHS · '+self.tape.get('title','') if self.tape else '')
+ def _surf_sync(self):
+  labels=('SURF','30S','1M','3M','5M','15M','30M','60M'); self.emit('surf',labels[self.surf_level],self.surf_level>1)
+ def _load_shelves(self):
+  if not self.tv:return
+  lists=[]
+  for shelf in ('new','movies','tv'):
+   status,data,_=self.tv.request('GET','/api/vhs/shelf?shelf='+shelf)
+   lists.append(data if status==200 and isinstance(data,list) else [])
+  all_,seen=[],set()
+  for i,items in enumerate(lists):
+   for item in items:
+    if isinstance(item,dict) and item.get('key') not in seen:
+     seen.add(item.get('key')); item=dict(item); item['isNew']=True if i==0 else None
+     item['pos']=self.store.get('pos.'+item['key']); item['done']=self.store.get('done.'+item['key']) or None
+     all_.append(item); self.by_key[item['key']]=item
+  self.shelf_cache=all_; self.shelf_at=time.monotonic(); self.emit('shelves',all_)
+ def shelves(self):
+  if self.shelf_cache is not None and time.monotonic()-self.shelf_at<600:self.emit('shelves',self.shelf_cache)
+  else:self._load_shelves()
+ def cover(self, ident):
+  if not isinstance(ident,str) or not __import__('re').match(r'^\d+/\d+$',ident):return
+  if ident in self.cover_cache:self.emit('cover',ident,self.cover_cache[ident]); return
+  if not self.tv:return
+  status,_,raw=self.tv.request('GET','/api/vhs/cover/'+ident)
+  if status==200 and raw:
+   value='data:image/jpeg;base64,'+base64.b64encode(raw).decode(); self.cover_cache[ident]=value; self.emit('cover',ident,value)
+ def open_show(self,key):
+  if not self.tv:return
+  status,data,_=self.tv.request('GET','/api/vhs/tape/'+str(key))
+  if status==200 and isinstance(data,dict):
+   for ep in data.get('episodes',[]):
+    ep['show']=data.get('title'); self.by_key[ep.get('key')]=ep
+   self.emit('show',data)
+  else:self.emit('show',{'error':status})
+ def xray(self):
+  if not self.tv:return
+  n=self.cast_ch if self.cast_to else self.channel
+  if self.cast_to:
+   st,data,_=self.tv.request('GET','/api/cast/here?rx='+self.cast_to)
+   if st==200 and isinstance(data,dict) and isinstance(data.get('ch'),int): n=self.cast_ch=data['ch']
+  if not n:self.emit('xray',None); return
+  status,data,_=self.tv.request('GET','/api/xray/'+str(n)); self.emit('xray',data if status==200 and data else {'error':status})
+ def person(self,name):
+  if not self.tv:return
+  name=str(name)[:80]; status,data,_=self.tv.request('GET','/api/xray/person?name='+quote(name)); self.emit('person',name,data if status==200 else None)
+ def filter(self,x):
+  seq,q,lines=x.get('seq'),x.get('q'),x.get('lines')
+  fzf=self.config.get('fzf','/opt/homebrew/bin/fzf')
+  if not isinstance(lines,list) or not fzf or not os.path.exists(fzf):self.emit('filtered',seq,None); return
+  try:
+   p=subprocess.run([fzf,'--filter='+str(q),'--delimiter=\t'],input='\n'.join(str(v).replace('\n',' ').replace('\r',' ') for v in lines),text=True,capture_output=True,timeout=5)
+   nums=[int(line.split('\t',1)[0]) for line in p.stdout.splitlines() if line.split('\t',1)[0].isdigit()]
+   self.emit('filtered',seq,nums)
+  except (OSError,subprocess.SubprocessError):self.emit('filtered',seq,None)
+ def push_channels(self):
+  try:
+   if not self.auth and os.getenv('TUNARRD_TEST')!='1':return
+   req=Request(self.config['baseUrl'].rstrip('/')+'/api/channels',headers={'Authorization':self.auth or ''}); raw=json.load(urlopen(req,timeout=5)); channels=raw.get('data',raw) if isinstance(raw,dict) else raw
+  except (OSError,URLError,ValueError):return
+  channels=sorted(channels,key=lambda c:c.get('number',0)); self.emit('channels',[{'number':c.get('number'),'name':c.get('name')} for c in channels],self.channel or False)
+  for c in channels:
+   try:
+    req=Request(self.config['baseUrl'].rstrip('/')+'/api/channels/'+str(c['id'])+'/now_playing',headers={'Authorization':self.auth or ''}); np=json.load(urlopen(req,timeout=5)); title=self.describe(np)
+   except (OSError,URLError,ValueError,KeyError): title=''
+   self.emit('np',c.get('number'),title or '')
+ def describe(self,np):
+  if not isinstance(np,dict) or not np.get('title'):return None
+  if np.get('subtype')=='episode' and isinstance(np.get('grandparent'),dict) and np['grandparent'].get('title'):
+   se=(' S%02dE%02d' % (np.get('parent',{}).get('index',0),np.get('episodeNumber',0))) if np.get('parent',{}).get('index') and np.get('episodeNumber') else ''
+   return np['grandparent']['title']+se+' – '+np['title']
+  return np['title']
+ def vhs_now(self):
+  if not self.channel or not self.tv:return
+  status,x,_=self.tv.request('GET','/api/xray/'+str(self.channel))
+  if status!=200 or not isinstance(x,dict) or not x.get('title'):return
+  if self.shelf_cache is None:self._load_shelves()
+  want=str(x.get('show') or x['title']).lower()
+  for t in self.shelf_cache or []:
+   if str(t.get('title','')).lower()==want and bool(x.get('show'))==(t.get('type')=='show'):
+    if not x.get('show'): self.store.set('pos.'+t['key'],0); self.play_tape(t); return
+    st,show,_=self.tv.request('GET','/api/vhs/tape/'+t['key'])
+    for ep in show.get('episodes',[]) if st==200 and isinstance(show,dict) else []:
+     if ep.get('season')==x.get('season') and ep.get('episode')==x.get('episode'):ep['show']=show.get('title');self.store.set('pos.'+ep['key'],0);self.play_tape(ep);return
+ def _mpv_message(self,args):
+  if not args:return
+  if args[0]=='tunarr-xray-want':
+   if self.xray_cache and self.xray_cache[0]>time.time()*1000:self.mpv.command(['script-message-to','xray','set',json.dumps(self.xray_cache[1])]);return
+   self.mpv.command(['script-message-to','xray','set','null'])
+   if not self.xray_loading:self.xray_loading=True; self.pool.submit(self._mpv_xray)
+  elif args[0]=='tunarr-xray-click': self.emit('ui',{'open':True,'tab':'xray','find':False}); self.xray()
+ def _mpv_xray(self):
+  try:
+   if not self.tv or not self.channel:return
+   st,data,_=self.tv.request('GET','/api/xray/'+str(self.channel)); value=data if st==200 else {'error':st}; stop=value.get('stop',0) if isinstance(value,dict) else 0
+   self.xray_cache=(stop,value); self.mpv.command(['script-message-to','xray','set',json.dumps(value)])
+  finally:self.xray_loading=False
  def apply(self,x):
   cmd=x.get('cmd')
   if cmd=='play':
@@ -256,6 +362,18 @@ class Daemon:
   elif cmd=='pip':
    if self.fullscreen: self.mpv.command(['set_property','fullscreen',False]); self.fullscreen=False; self.screen=None; self._write_state()
   elif cmd=='playon': self.pool.submit(self._playon,x)
+  elif cmd=='find': self.emit('find'); self.emit('ui',{'open':True,'tab':'tv','find':True})
+  elif cmd=='panel':
+   tab=x.get('tab') if x.get('tab') in ('tv','club','vhs','xray') else 'tv'; self.panelTab=tab; self.emit('ui',{'open':True,'tab':tab,'find':False}); self._write_state()
+  elif cmd=='vhsnow': self.pool.submit(self.vhs_now)
+  elif cmd=='surf':
+   self.surf_level=(self.surf_level+1)%8
+   if self.surf_timer:self.surf_timer.cancel();self.surf_timer=None
+   periods=(0,30,60,180,300,900,1800,3600)
+   if self.surf_level>1:
+    def tick(): self.q.put({'cmd':'step','d':1}); self.surf_timer=threading.Timer(periods[self.surf_level],tick);self.surf_timer.daemon=True;self.surf_timer.start()
+    self.surf_timer=threading.Timer(periods[self.surf_level],tick);self.surf_timer.daemon=True;self.surf_timer.start()
+   self._surf_sync()
 
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*x): pass
@@ -265,16 +383,28 @@ class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   if not self._ok(): return self._json(403,{'error':'forbidden'})
   if urlparse(self.path).path=='/state': return self._json(200,self.server.daemon._state() | {'channel':self.server.daemon.channel,'tape':self.server.daemon.tape})
+  if urlparse(self.path).path=='/panel':
+   d=self.server.daemon
+   if not hasattr(d,'_panel_html'):
+    root=Path(d.config.get('panelDir') or Path(__file__).resolve().parent.parent)
+    try:d._panel_html=(root/'panel.html').read_text().replace('{{FONT}}',base64.b64encode((root/'vt323.woff2').read_bytes()).decode())
+    except OSError:return self._json(500,{'error':'panel unavailable'})
+   self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.end_headers();self.wfile.write(d._panel_html.encode());return
   if urlparse(self.path).path=='/events':
    d=self.server.daemon
    with d.events_lock:
-    if d.events>=2:return self._json(429,{'error':'too many event clients'})
+    if d.events>=4:return self._json(429,{'error':'too many event clients'})
     d.events+=1
+   client=d.bus.connect()
    try:
     self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Cache-Control','no-cache');self.end_headers()
-    while not d.stop_event.wait(15): self.wfile.write(b'event: ping\ndata: {}\n\n');self.wfile.flush()
+    while not d.stop_event.is_set():
+     try: event=client.get(timeout=15)
+     except queue.Empty:event='event: ping\ndata: {}\n\n'
+     self.wfile.write(event.encode());self.wfile.flush()
    except (BrokenPipeError,ConnectionResetError): pass
    finally:
+    d.bus.disconnect(client)
     with d.events_lock:d.events-=1
    return
   self._json(404,{'error':'not found'})
@@ -283,9 +413,49 @@ class Handler(BaseHTTPRequestHandler):
   try: body=json.loads(self.rfile.read(int(self.headers.get('Content-Length','0'))) or b'{}')
   except json.JSONDecodeError:return self._json(400,{'error':'bad json'})
   d=self.server.daemon; path=urlparse(self.path).path
-  if path=='/window': d.frame=body.get('frame') if body.get('onscreen',True) else None; d._write_state(); return self._json(202,{'queued':True})
+  if path=='/window':
+   d.frame=body.get('frame') if body.get('onscreen',True) else None
+   if isinstance(body.get('panel'),dict): d.panel={'frame':body['panel'].get('frame'),'visible':bool(body['panel'].get('visible'))}
+   d._write_state(); return self._json(202,{'queued':True})
+  if path=='/eval':
+   if not (d.config.get('evalEnabled') or os.getenv('TUNARRD_EVAL_ENABLED')=='1'):return self._json(403,{'error':'disabled'})
+   if not isinstance(body.get('js'),str):return self._json(400,{'error':'bad js'})
+   d.emit('eval',body['js']);return self._json(202,{'queued':True})
+  if path=='/act':
+   act=body.get('act')
+   if act=='ready':
+    d.emit('tab',d.panelTab); d.emit('casts',[x.get('name') for x in d.config.get('cast',[]) if x.get('name')]);
+    if d.vibe:d.emit('vibe',d.vibe,{},getattr(d,'trophy',None))
+    if d.shelf_cache is not None:d.emit('shelves',d.shelf_cache)
+   elif act=='tab' and body.get('tab') in ('tv','club','vhs','xray'):d.panelTab=body['tab'];d._write_state()
+   elif act=='close':d.emit('ui',{'close':True})
+   elif act=='shelves':d.pool.submit(d.shelves)
+   elif act=='cover':d.pool.submit(d.cover,str(body.get('cover','')))
+   elif act=='show':d.pool.submit(d.open_show,str(body.get('key','')))
+   elif act=='tape':
+    item=d.by_key.get(str(body.get('key','')))
+    if item:d.q.put({'cmd':'tape',**item})
+   elif act=='play':
+    try:n=int(body.get('channel'))
+    except (TypeError,ValueError):n=None
+    if n is not None:
+     # Selecting an already-visible channel must never use play's toggle/hide path.
+     if n==d.channel and d.mpv.pid:
+      if d.hidden:d.q.put({'cmd':'play','ch':n})
+     else:d.q.put({'cmd':'play','ch':n})
+     d.pool.submit(d._remote_sync)
+   elif act=='cast':d.q.put({'cmd':'cast','i':body.get('i')})
+   elif act=='xray':d.pool.submit(d.xray)
+   elif act=='person':d.pool.submit(d.person,body.get('name',''))
+   elif act=='open' and isinstance(body.get('url'),str) and body['url'].startswith('https://en.wikipedia.org/'):
+    d.pool.submit(subprocess.call,['/usr/bin/open',body['url']],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+   elif act=='filter':d.pool.submit(d.filter,body)
+   elif act=='channels':d.pool.submit(d.push_channels);d.pool.submit(d._remote_sync)
+   elif act=='remote' and body.get('cmd') in ('up','down','random','surf','volup','voldown','toggle','pip','max','stop','vhsnow'):
+    m={'up':{'cmd':'step','d':1},'down':{'cmd':'step','d':-1},'random':{'cmd':'random'},'surf':{'cmd':'surf'},'volup':{'cmd':'volume','d':d.config['volStep']},'voldown':{'cmd':'volume','d':-d.config['volStep']},'toggle':{'cmd':'play','ch':d.channel or d.last},'pip':{'cmd':'pip'},'max':{'cmd':'playon','screen':d.screen},'stop':{'cmd':'stop'},'vhsnow':{'cmd':'vhsnow'}}[body['cmd']]
+    if m.get('ch') is not None or m['cmd']!='play':d.q.put(m)
+   return self._json(202,{'queued':True})
   if path=='/cmd':
-   if body.get('cmd') in ('find','panel','vhsnow'): return self._json(501,{'error':'step 4'})
    if not d.auth and os.getenv('TUNARRD_TEST')!='1' and body.get('cmd') in ('play','step','random','playon'):return self._json(503,{'error':'no keychain password'})
    d.q.put(body); return self._json(202,{'queued':True})
   self._json(404,{'error':'not found'})
