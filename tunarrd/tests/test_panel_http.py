@@ -317,6 +317,19 @@ class Panel(unittest.TestCase):
         self.act(act='tab', tab='bogus'); time.sleep(.4); self.assertEqual(file()['panel']['tab'], 'vhs')
 
 
+class PanelViaTv(Panel):
+    config = {'streamViaTv': True}
+    only = 'test_stream_via_tv_sends_the_site_cookie_not_the_tunarr_password'
+
+    def test_stream_via_tv_sends_the_site_cookie_not_the_tunarr_password(self):
+        self.play(5); argsf = Path(str(self.log) + '.args'); self.wait_for(argsf.exists, 'mpv started')
+        args = argsf.read_text()
+        self.assertIn('--http-header-fields=Cookie: tv_session=s', args); self.assertNotIn('Authorization', args)
+        self.play(2); c = self.cmds()
+        self.assertIn(['change-list', 'http-header-fields', 'set', 'Cookie: tv_session=s'], c)
+        self.assertFalse([x for x in c if 'Authorization' in json.dumps(x)])
+
+
 class PanelEval(Panel):
     env = {'TUNARRD_EVAL_ENABLED': '1'}
     only = 'test_eval_emits_source_when_enabled'
@@ -341,7 +354,7 @@ class PanelVibe(Panel):
 
 
 # A variant reruns only its own test(s); every inherited test is switched off.
-for _cls in (PanelEval, PanelVibe):
+for _cls in (PanelEval, PanelVibe, PanelViaTv):
     for _n in [n for n in dir(Panel) if n.startswith('test_') and n != _cls.only]:
         setattr(_cls, _n, None)
 

@@ -93,6 +93,15 @@ class Daemon:
    except Exception as e: print('tunarrd command:',e,file=sys.stderr)
  def source(self,n):
   return f'av://lavfi:testsrc=size=640x360:rate=10' if os.getenv('TUNARRD_TEST')=='1' else f"{self.config['baseUrl'].rstrip('/')}/stream/channels/{n}.ts"
+ def chan_src(self,n):
+  # A channel plays from Tunarr (basic auth) or, with streamViaTv, through the tv site's stream (session cookie): the Cloudflare path beats the direct route from home.
+  if self.config.get('streamViaTv') and self.tv and n:
+   cookie=self.tv.cookie_header()
+   if not cookie: self.tv.request('GET','/api/me'); cookie=self.tv.cookie_header()
+   if cookie:
+    url=self.source(n) if os.getenv('TUNARRD_TEST')=='1' else '%s/api/stream/%d' % (self.config['tvUrl'].rstrip('/'),n)
+    return url,'Cookie: '+cookie
+  return self.source(n),'Authorization: '+(self.auth or '')
  def _tick(self):
   every=float(os.getenv('TUNARRD_TICK','15'))
   while not self.stop_event.wait(every):
@@ -112,10 +121,10 @@ class Daemon:
   if self.tv and self.beating: self.tv.request('DELETE','/api/beat')
   self.beating=False
  def _args(self,n,screen=None):
-  c=self.config; geom=f"--geometry={round(c['width']*self.scale)}x{round(c['height']*self.scale)}-{round(c['margin']*self.scale)}-{round(c['margin']*self.scale)}"
-  a=['--no-config','--no-terminal',f'--title=Tunarr ch{n}','--force-window=immediate','--ontop','--no-border','--on-all-workspaces',geom,'--keepaspect-window=no','--native-fs=no','--hwdec=videotoolbox','--profile=low-latency','--cache=yes','--cache-pause=yes','--cache-pause-wait=3','--demuxer-readahead-secs=8','--demuxer-lavf-analyzeduration=0.5','--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5',f'--input-ipc-server={self.sock}',f'--script={Path(__file__).resolve().parent.parent}/static.lua',f'--script={Path(__file__).resolve().parent.parent}/xray.lua',f'--http-header-fields=Authorization: {self.auth or ""}','--keep-open=no','--start=none']
+  c=self.config; url,header=self.chan_src(n); geom=f"--geometry={round(c['width']*self.scale)}x{round(c['height']*self.scale)}-{round(c['margin']*self.scale)}-{round(c['margin']*self.scale)}"
+  a=['--no-config','--no-terminal',f'--title=Tunarr ch{n}','--force-window=immediate','--ontop','--no-border','--on-all-workspaces',geom,'--keepaspect-window=no','--native-fs=no','--hwdec=videotoolbox','--profile=low-latency','--cache=yes','--cache-pause=yes','--cache-pause-wait=3','--demuxer-readahead-secs=8','--demuxer-lavf-analyzeduration=0.5','--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5',f'--input-ipc-server={self.sock}',f'--script={Path(__file__).resolve().parent.parent}/static.lua',f'--script={Path(__file__).resolve().parent.parent}/xray.lua',f'--http-header-fields={header}','--keep-open=no','--start=none']
   if os.getenv('TUNARRD_TEST')=='1': a.append('--no-audio')
-  a += ['--fullscreen',f'--fs-screen-name={screen}'] if screen else ['--no-fullscreen']; return a+[self.source(n)]
+  a += ['--fullscreen',f'--fs-screen-name={screen}'] if screen else ['--no-fullscreen']; return a+[url]
  def _cancel_warm(self):
   if self.warm: self.warm.cancel(); self.warm=None
  def play(self,n):
@@ -123,7 +132,7 @@ class Daemon:
   self.last=n
   if not self.mpv.pid: self.mpv.start(self._args(n,self.screen if self.fullscreen else None)); self.channel=n; self.hidden=False
   elif self.channel != n:
-   self.show(); h=f'Authorization: {self.auth or ""}'; self.mpv.command(['change-list','http-header-fields','set',h]); self.mpv.command(['set_property','start','none']); self.mpv.command(['set_property','pause',False]); self.mpv.command(['loadfile',self.source(n),'replace']); self.mpv.command(['set_property','title',f'Tunarr ch{n}']); self.channel=n
+   self.show(); url,h=self.chan_src(n); self.mpv.command(['change-list','http-header-fields','set',h]); self.mpv.command(['set_property','start','none']); self.mpv.command(['set_property','pause',False]); self.mpv.command(['loadfile',url,'replace']); self.mpv.command(['set_property','title',f'Tunarr ch{n}']); self.channel=n
   elif self.hidden: self.show()
   else: self.hide()
   self.mpv.command(['script-message-to','xray','enable','0' if self.hidden else '1']); self._changed()
