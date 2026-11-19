@@ -913,6 +913,9 @@ function M.panel(tab)
     return
   end
   panelTab = tab
+  -- A webview hidden for a while can stop painting (white window) while its page still answers
+  -- JS, so healPanel's DOM probe can't see it: open from hidden on a fresh webview every time.
+  if panel and not panelVisible() then panel:delete(); panel = nil end
   if not panel then makePanel() end
   if not panelVisible() then panelSet = nil end -- re-dock each time it opens
   dock()
@@ -944,7 +947,7 @@ end
 
 -- The panel's screen frame while it's open, for the break overlay's mouse passthrough.
 function M.panelFrame()
-  if panelVisible() then return panel:frame().table end
+  if panelVisible() then local f = panel:frame(); return { x = f.x, y = f.y, w = f.w, h = f.h } end -- webview:frame() is a plain table, no .table
 end
 
 function M.pickerVisible()
