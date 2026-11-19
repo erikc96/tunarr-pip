@@ -318,13 +318,13 @@ class Panel(unittest.TestCase):
 
 
 class PanelViaTv(Panel):
-    config = {'streamViaTv': True}
+    config = {'streamViaTv': True, 'mpvExtra': ['--volume=0']}
     only = 'test_stream_via_tv_sends_the_site_cookie_not_the_tunarr_password'
 
     def test_stream_via_tv_sends_the_site_cookie_not_the_tunarr_password(self):
         self.play(5); argsf = Path(str(self.log) + '.args'); self.wait_for(argsf.exists, 'mpv started')
         args = argsf.read_text()
-        self.assertIn('--http-header-fields=Cookie: tv_session=s', args); self.assertNotIn('Authorization', args)
+        self.assertIn('--volume=0', args); self.assertIn('--http-header-fields=Cookie: tv_session=s', args); self.assertNotIn('Authorization', args)
         self.play(2); c = self.cmds()
         self.assertIn(['change-list', 'http-header-fields', 'set', 'Cookie: tv_session=s'], c)
         self.assertFalse([x for x in c if 'Authorization' in json.dumps(x)])

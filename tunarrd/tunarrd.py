@@ -124,6 +124,7 @@ class Daemon:
   c=self.config; url,header=self.chan_src(n); geom=f"--geometry={round(c['width']*self.scale)}x{round(c['height']*self.scale)}-{round(c['margin']*self.scale)}-{round(c['margin']*self.scale)}"
   a=['--no-config','--no-terminal',f'--title=Tunarr ch{n}','--force-window=immediate','--ontop','--no-border','--on-all-workspaces',geom,'--keepaspect-window=no','--native-fs=no','--hwdec=videotoolbox','--profile=low-latency','--cache=yes','--cache-pause=yes','--cache-pause-wait=3','--demuxer-readahead-secs=8','--demuxer-lavf-analyzeduration=0.5','--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5',f'--input-ipc-server={self.sock}',f'--script={Path(__file__).resolve().parent.parent}/static.lua',f'--script={Path(__file__).resolve().parent.parent}/xray.lua',f'--http-header-fields={header}','--keep-open=no','--start=none']
   if os.getenv('TUNARRD_TEST')=='1': a.append('--no-audio')
+  a += [str(x) for x in c.get('mpvExtra') or []] # config escape hatch, e.g. ['--volume=0'] for a silent trial
   a += ['--fullscreen',f'--fs-screen-name={screen}'] if screen else ['--no-fullscreen']; return a+[url]
  def _cancel_warm(self):
   if self.warm: self.warm.cancel(); self.warm=None
