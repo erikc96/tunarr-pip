@@ -23,7 +23,8 @@ class TvSite:
         # Hermetic tests may only talk to their explicitly configured loopback stub.
         if os.getenv('TUNARRD_TEST') == '1' and urlparse(self.base_url).hostname not in ('127.0.0.1', 'localhost', '::1'):
             return 0, None, b''
-        headers = {'Content-Type': 'application/json'} if body is not None else {}
+        headers = {'User-Agent': 'tunarrd/1.0'} # Cloudflare answers 1010 to urllib's default agent
+        if body is not None: headers['Content-Type'] = 'application/json'
         req = Request(self.base_url + '/' + path.lstrip('/'), data=body,
                       headers=headers, method=method)
         try:

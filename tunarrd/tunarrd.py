@@ -12,6 +12,7 @@ from store import PositionStore
 from tvsite import TvSite
 from bus import Bus
 
+UA = 'tunarrd/1.0' # Cloudflare (tv site) and the Tunarr host refuse urllib's default agent; a plain client name passes
 DEFAULT = {'baseUrl': None, 'user': None, 'streamViaTv': False, 'width':480, 'height':270,
            'margin':16, 'warmMinutes':15, 'volStep':5, 'mpv':'/opt/homebrew/bin/mpv',
            'fzf':'/opt/homebrew/bin/fzf', 'evalEnabled':False}
@@ -198,7 +199,7 @@ class Daemon:
   if not topic:return
   base=self.config.get('ntfyUrl','https://ntfy.sh')
   if os.getenv('TUNARRD_TEST')=='1' and urlparse(base).hostname not in ('127.0.0.1','localhost','::1'):return
-  req=Request(base.rstrip('/')+'/'+topic,data=message.encode(),method='POST',headers=headers or {})
+  req=Request(base.rstrip('/')+'/'+topic,data=message.encode(),method='POST',headers={'User-Agent':UA, **(headers or {})})
   try:urlopen(req,timeout=5).read()
   except OSError:pass
  def _screen_present(self,name):
@@ -249,7 +250,7 @@ class Daemon:
    if cmd=='tune': body['ch']=ch
    self._ntfy(topic,json.dumps(body))
  def canary(self):
-  try:status=urlopen(self.config['canaryUrl'],timeout=5).status
+  try:status=urlopen(Request(self.config['canaryUrl'],headers={'User-Agent':UA}),timeout=5).status
   except HTTPError as e:status=e.code # any answer means the port reopened, as hs.http status > 0
   except OSError:return
   if status>0:
@@ -258,7 +259,7 @@ class Daemon:
  def _channels(self):
   if self.channels is not None and time.monotonic()-self.channels_at<60:return self.channels
   if not self.auth and os.getenv('TUNARRD_TEST')!='1': raise RuntimeError('no keychain password')
-  req=Request(self.config['baseUrl'].rstrip('/')+'/api/channels',headers={'Authorization':self.auth})
+  req=Request(self.config['baseUrl'].rstrip('/')+'/api/channels',headers={'Authorization':self.auth,'User-Agent':UA})
   try: data=json.load(urlopen(req,timeout=5))
   except OSError:
    if self.channels is not None: return self.channels # stale list beats no list
@@ -351,12 +352,12 @@ class Daemon:
  def push_channels(self):
   try:
    if not self.auth and os.getenv('TUNARRD_TEST')!='1':return
-   req=Request(self.config['baseUrl'].rstrip('/')+'/api/channels',headers={'Authorization':self.auth or ''}); raw=json.load(urlopen(req,timeout=5)); channels=raw.get('data',raw) if isinstance(raw,dict) else raw
+   req=Request(self.config['baseUrl'].rstrip('/')+'/api/channels',headers={'Authorization':self.auth or '','User-Agent':UA}); raw=json.load(urlopen(req,timeout=5)); channels=raw.get('data',raw) if isinstance(raw,dict) else raw
   except (OSError,URLError,ValueError):return
   channels=sorted(channels,key=lambda c:c.get('number',0)); self.names={c.get('number'):c.get('name') for c in channels}; self.emit('channels',[{'number':c.get('number'),'name':c.get('name')} for c in channels],self.channel or False)
   for c in channels:
    try:
-    req=Request(self.config['baseUrl'].rstrip('/')+'/api/channels/'+str(c['id'])+'/now_playing',headers={'Authorization':self.auth or ''}); np=json.load(urlopen(req,timeout=5)); title=self.describe(np)
+    req=Request(self.config['baseUrl'].rstrip('/')+'/api/channels/'+str(c['id'])+'/now_playing',headers={'Authorization':self.auth or '','User-Agent':UA}); np=json.load(urlopen(req,timeout=5)); title=self.describe(np)
    except (OSError,URLError,ValueError,KeyError): title=''
    self.emit('np',c.get('number'),title or '')
  def describe(self,np):

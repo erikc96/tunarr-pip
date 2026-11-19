@@ -45,7 +45,9 @@ echo "$@" >> "$OPEN_LOG"
 
 
 class Tunarr(BaseHTTPRequestHandler):
+    agents = set()
     def do_GET(self):
+        self.agents.add(self.headers.get('User-Agent'))
         self.send_response(200); self.end_headers()
         if self.path == '/api/channels':
             body = [{'id': 'idb', 'number': 5, 'name': 'Five'}, {'id': 'ida', 'number': 2, 'name': 'Two'}]
@@ -59,6 +61,7 @@ class Tunarr(BaseHTTPRequestHandler):
 
 class Site(BaseHTTPRequestHandler):
     log = []
+    agents = set()
     def _send(self, status, body=None, cookie=False):
         self.send_response(status)
         if cookie: self.send_header('Set-Cookie', 'tv_session=s; Path=/')
@@ -71,7 +74,7 @@ class Site(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self.log.append(('DELETE', self.path)); self._send(200, {})
     def do_GET(self):
-        p = self.path; self.log.append(('GET', p))
+        p = self.path; self.log.append(('GET', p)); self.agents.add(self.headers.get('User-Agent'))
         shelves = {'new': [{'key': 'k1', 'title': 'New One', 'type': 'movie'}],
                    'movies': [{'key': 'k1', 'title': 'New One', 'type': 'movie'}, {'key': 'k2', 'title': 'Old', 'type': 'movie'}],
                    'tv': [{'key': 'k3', 'title': 'Show', 'type': 'show'}]}
@@ -121,7 +124,7 @@ class Panel(unittest.TestCase):
         for name, text in (('mpv.py', MPV_STUB), ('fzf.py', FZF_STUB), ('open.sh', OPEN_STUB),
                            ('probe.sh', '#!/bin/sh\ncat "$(dirname "$0")/probe.out" 2>/dev/null\n'), ('connect.sh', OPEN_STUB.replace('$@', 'connect'))):
             (self.d / name).write_text(text); (self.d / name).chmod(0o755)
-        self.log = self.d / 'log'; self.open_log = self.d / 'open.log'; Site.log = []
+        self.log = self.d / 'log'; self.open_log = self.d / 'open.log'; Site.log = []; Site.agents = set(); Tunarr.agents = set()
         self.tunarr = ThreadingHTTPServer(('127.0.0.1', 0), Tunarr); self.site = ThreadingHTTPServer(('127.0.0.1', 0), Site)
         for s in (self.tunarr, self.site): threading.Thread(target=s.serve_forever, daemon=True).start()
         s = socket.socket(); s.bind(('127.0.0.1', 0)); self.port = s.getsockname()[1]; s.close()
@@ -201,6 +204,10 @@ class Panel(unittest.TestCase):
         c = self.sse()
         self.wait_for(lambda: len(c.events) >= 2, 'replay')
         self.assertEqual(c.events[:2], [('tab', ['tv']), ('casts', [['IPAD', 'VAN', 'IPAD (SIDECAR)']])])
+
+    def test_outgoing_requests_carry_a_plain_client_agent(self):
+        c = self.sse(); self.act(act='channels'); self.act(act='shelves'); c.wait('shelves'); c.wait('channels')
+        self.assertEqual((Site.agents, Tunarr.agents), ({'tunarrd/1.0'}, {'tunarrd/1.0'}))
 
     def test_channels_act_emits_list_and_now_playing(self):
         c = self.sse(); self.act(act='channels')
