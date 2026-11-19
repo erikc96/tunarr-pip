@@ -265,6 +265,29 @@ class Panel(unittest.TestCase):
         self.req('/cmd', {'cmd': 'panel', 'tab': 'xray'})
         self.wait_for(lambda: ('ui', [{'open': True, 'tab': 'xray', 'find': False}]) in c.events, 'panel ui')
 
+    def test_find_and_panel_hide_a_visible_panel_on_the_same_tab(self):
+        c = self.sse()
+        self.req('/window', {'onscreen': False, 'panel': {'frame': {'x': 1, 'y': 2, 'w': 3, 'h': 4}, 'visible': True}})
+        self.act(act='tab', tab='tv')
+        self.wait_for(lambda: self.state().get('pickerVisible'), 'picker visible')
+        self.req('/cmd', {'cmd': 'find'})  # opt-9 with the TV tab open closes it
+        self.wait_for(lambda: ('ui', [{'close': True}]) in c.events, 'close ui')
+        self.assertNotIn(('find', []), c.events)
+        n = len(c.events); self.req('/cmd', {'cmd': 'panel', 'tab': 'tv'})  # same tab again also closes
+        self.wait_for(lambda: c.events[n:].count(('ui', [{'close': True}])) == 1, 'panel close')
+        self.req('/cmd', {'cmd': 'panel', 'tab': 'vhs'})  # another tab switches, not closes
+        self.wait_for(lambda: ('ui', [{'open': True, 'tab': 'vhs', 'find': False}]) in c.events, 'switch tab')
+        self.req('/window', {'panel': {'frame': None, 'visible': False}})
+        self.req('/cmd', {'cmd': 'find'})  # hidden panel: opens with find
+        self.wait_for(lambda: ('ui', [{'open': True, 'tab': 'tv', 'find': True}]) in c.events, 'open find')
+
+    def test_find_is_replayed_once_when_a_fresh_panel_page_reports_ready(self):
+        self.req('/cmd', {'cmd': 'find'}); time.sleep(.2)
+        c = self.sse(); self.act(act='ready')  # the new webview's page
+        self.wait_for(lambda: ('find', []) in c.events, 'find replay')
+        n = len(c.events); self.act(act='ready'); time.sleep(.4)
+        self.assertNotIn(('find', []), c.events[n:])  # only once
+
     def test_xray_want_from_mpv_is_answered_once_then_cached(self):
         self.play(5)
         argsf = Path(str(self.log) + '.args'); self.wait_for(argsf.exists, 'mpv started')

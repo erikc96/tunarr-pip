@@ -140,7 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.target = self; statusItem.button?.action = #selector(togglePanel)
+        statusItem.button?.target = self; statusItem.button?.action = #selector(statusClicked)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         updateStatus()
         makePanel()
         stateTimer = Timer.scheduledTimer(timeInterval: 10, target: self, selector: #selector(fetchState), userInfo: nil, repeats: true)
@@ -179,6 +180,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false; panel.delegate = self
         panel.onVisibilityChanged = { [weak self] in self?.sendWindowReport() }
+        loadWebView()
+        panel.orderOut(nil)
+    }
+
+    /// A webview left hidden for a while can stop painting (white window) while its page still answers JS,
+    /// so every open from hidden gets a fresh one (the old Fuzz module did the same: panel:delete(), makePanel()).
+    func loadWebView() {
+        if let old = webView { old.configuration.userContentController.removeScriptMessageHandler(forName: "fuzz"); old.removeFromSuperview() }
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.add(self, name: "fuzz")
         webView = WKWebView(frame: panel.contentView!.bounds, configuration: configuration)
@@ -187,11 +196,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         var components = URLComponents(url: baseURL.appendingPathComponent("panel"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "t", value: token)]
         webView.load(URLRequest(url: components.url!))
-        panel.orderOut(nil)
+    }
+
+    /// Left click toggles the panel; right click (or ctrl-click) offers "Stop player", the PiP has no close button.
+    @objc func statusClicked() {
+        guard let event = NSApp.currentEvent, event.type == .rightMouseUp || event.modifierFlags.contains(.control) else { togglePanel(); return }
+        let menu = NSMenu()
+        let stop = NSMenuItem(title: "Stop player", action: #selector(stopPlayer), keyEquivalent: ""); stop.target = self
+        menu.addItem(stop)
+        let toggle = NSMenuItem(title: panel.isVisible ? "Hide panel" : "Show panel", action: #selector(togglePanel), keyEquivalent: ""); toggle.target = self
+        menu.addItem(toggle)
+        statusItem.menu = menu; statusItem.button?.performClick(nil); statusItem.menu = nil
+    }
+
+    @objc func stopPlayer() {
+        session.dataTask(with: request("cmd", method: "POST", body: try? JSONSerialization.data(withJSONObject: ["cmd": "stop"]))).resume()
     }
 
     @objc func togglePanel() {
-        if panel.isVisible { panel.orderOut(nil) } else { dockPanel(); panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
+        if panel.isVisible { panel.orderOut(nil) } else { loadWebView(); dockPanel(); panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
         sendWindowReport()
     }
 

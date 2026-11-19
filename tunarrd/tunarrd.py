@@ -406,9 +406,13 @@ class Daemon:
   elif cmd=='pip':
    if self.fullscreen: self.mpv.command(['set_property','fullscreen',False]); self.fullscreen=False; self.screen=None; self._write_state()
   elif cmd=='playon': self.pool.submit(self._playon,x)
-  elif cmd=='find': self.emit('find'); self.emit('ui',{'open':True,'tab':'tv','find':True})
+  elif cmd=='find':
+   if self.panel.get('visible') and self.panelTab=='tv': self.emit('ui',{'close':True})  # opt-9 again hides, like the old M.find
+   else: self.panelTab='tv'; self.find_at=time.monotonic(); self.emit('find'); self.emit('ui',{'open':True,'tab':'tv','find':True}); self._write_state()
   elif cmd=='panel':
-   tab=x.get('tab') if x.get('tab') in ('tv','club','vhs','xray') else 'tv'; self.panelTab=tab; self.emit('ui',{'open':True,'tab':tab,'find':False}); self._write_state()
+   tab=x.get('tab') if x.get('tab') in ('tv','club','vhs','xray') else 'tv'
+   if self.panel.get('visible') and tab==self.panelTab: self.emit('ui',{'close':True})  # same tab again hides, like the old M.panel
+   else: self.panelTab=tab; self.emit('ui',{'open':True,'tab':tab,'find':False}); self._write_state()
   elif cmd=='vhsnow': self.pool.submit(self.vhs_now)
   elif cmd=='surf':
    self.surf_level=(self.surf_level+1)%8
@@ -471,6 +475,7 @@ class Handler(BaseHTTPRequestHandler):
     d.emit('tab',d.panelTab); d.emit('casts',[x.get('name') for x in d.config.get('cast',[]) if x.get('name')]);
     d.emit_vibe()
     if d.shelf_cache is not None:d.emit('shelves',d.shelf_cache)
+    if time.monotonic()-getattr(d,'find_at',-99)<5: d.find_at=-99; d.emit('find')  # a fresh webview opened for opt-9 missed the first find
    elif act=='tab' and body.get('tab') in ('tv','club','vhs','xray'):d.panelTab=body['tab'];d._write_state()
    elif act=='close':d.emit('ui',{'close':True})
    elif act=='shelves':d.pool.submit(d.shelves)
