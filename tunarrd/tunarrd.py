@@ -504,7 +504,7 @@ class Handler(BaseHTTPRequestHandler):
   self._json(404,{'error':'not found'})
 
 def main():
- lock=open('/tmp/tunarr-pipd.lock','w')
+ lock=open(os.environ.get('TUNARRD_LOCK','/tmp/tunarr-pipd.lock'),'w')
  try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError: print('tunarrd: already running',file=sys.stderr); return 0
  d=Daemon()

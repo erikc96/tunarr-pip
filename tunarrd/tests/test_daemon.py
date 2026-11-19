@@ -27,7 +27,7 @@ class T(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory(); self.d=Path(self.tmp.name); self.stub=self.d/'mpv.py'; self.stub.write_text(STUB);self.stub.chmod(0o755);self.log=self.d/'log'; self.sock=str(self.d/'mpv.sock')
   self.ch=ThreadingHTTPServer(('127.0.0.1',0),Channels);threading.Thread(target=self.ch.serve_forever,daemon=True).start()
-  self.port=self._port(); env=os.environ.copy();env.update(TUNARRD_DIR=str(self.d/'cfg'),TUNARRD_PORT=str(self.port),TUNARRD_MPV=str(self.stub),TUNARRD_SOCK=self.sock,TUNARRD_AUTH='Basic test',TUNARRD_TEST='1',TUNARRD_HEARTBEAT='0.2',MPV_LOG=str(self.log))
+  self.port=self._port(); env=os.environ.copy();env.update(TUNARRD_DIR=str(self.d/'cfg'),TUNARRD_PORT=str(self.port),TUNARRD_MPV=str(self.stub),TUNARRD_SOCK=self.sock,TUNARRD_AUTH='Basic test',TUNARRD_TEST='1',TUNARRD_HEARTBEAT='0.2',TUNARRD_LOCK=str(self.d/'lock'),MPV_LOG=str(self.log))
   (self.d/'cfg').mkdir();(self.d/'cfg'/'config.json').write_text(json.dumps({'baseUrl':f'http://127.0.0.1:{self.ch.server_port}','warmMinutes':.02}))
   self.p=subprocess.Popen([PY,str(ROOT/'tunarrd/tunarrd.py')],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE);self.token=self._wait_token()
  def tearDown(self):
@@ -73,7 +73,7 @@ class T(unittest.TestCase):
   t=threading.Thread(target=reader);t.start()
   for x in range(8): self.req('/window',{'frame':{'x':x,'y':2,'w':3,'h':4},'onscreen':True})
   time.sleep(.35);done.set();t.join();self.assertFalse(bad);self.assertEqual(json.loads((self.d/'cfg/state.json').read_text())['frame']['x'],7)
-  env=os.environ.copy();env['TUNARRD_DIR']=str(self.d/'other'); q=subprocess.run([PY,str(ROOT/'tunarrd/tunarrd.py')],env=env,capture_output=True,timeout=2);self.assertEqual(q.returncode,0)
+  env=os.environ.copy();env['TUNARRD_DIR']=str(self.d/'other');env['TUNARRD_LOCK']=str(self.d/'lock'); q=subprocess.run([PY,str(ROOT/'tunarrd/tunarrd.py')],env=env,capture_output=True,timeout=2);self.assertEqual(q.returncode,0)
   # Four clients reserve the SSE slots; the fifth is refused.
   import urllib.request
   a=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);b=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);c=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);e=urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{self.port}/events',headers={'X-Tunarr-Token':self.token}),timeout=2);self.assertEqual(self.req('/events').status,429);a.close();b.close();c.close();e.close()

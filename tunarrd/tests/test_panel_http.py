@@ -132,7 +132,7 @@ class Panel(unittest.TestCase):
         cfg.update(self.config); (self.d / 'cfg/config.json').write_text(json.dumps(cfg))
         env = os.environ.copy()
         env.update(TUNARRD_DIR=str(self.d / 'cfg'), TUNARRD_PORT=str(self.port), TUNARRD_MPV=str(self.d / 'mpv.py'), TUNARRD_SOCK=str(self.d / 'mpv.sock'),
-                   TUNARRD_AUTH='Basic test', TUNARRD_TEST='1', TUNARRD_TVPW='pw', TUNARRD_TICK='3600', MPV_LOG=str(self.log), OPEN_LOG=str(self.open_log))
+                   TUNARRD_AUTH='Basic test', TUNARRD_TEST='1', TUNARRD_TVPW='pw', TUNARRD_TICK='3600',TUNARRD_LOCK=str(self.d / 'lock'), MPV_LOG=str(self.log), OPEN_LOG=str(self.open_log))
         env.update(self.env)
         self.p = subprocess.Popen([PY, str(ROOT / 'tunarrd/tunarrd.py')], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.token = self._wait_token(); self.sse_clients = []
