@@ -10,8 +10,7 @@ check() { # name measured want
 # files Hammerspoon can load for this player: the module behind the symlink, or the new key file
 mod=$(ls "$HS_DIR"/tunarr_pip/*.lua 2>/dev/null)
 loaded=$("$HOME/life/bin/hs-safe" 'return type(package.loaded["tunarr_pip"])' 2>/dev/null)
-c() { [ -n "$mod" ] && cat $mod "$HS_DIR/tunarr_keys.lua" 2>/dev/null | grep -cE "$1" || echo 0; }
-[ -n "$mod" ] || c() { cat "$HS_DIR/tunarr_keys.lua" 2>/dev/null | grep -cE "$1" || echo 0; }
+c() { n=$(cat $mod "$HS_DIR/tunarr_keys.lua" 2>/dev/null | grep -cE "$1"); echo "${n:-0}"; } # $mod is empty once the old module is removed
 check "1 tunarr module loaded in Hammerspoon" "${loaded:-unreadable}" nil
 check "1 hs.timer.doEvery in tunarr files" "$(c 'hs\.timer\.doEvery')" 0
 check "2 hs.eventtap.new in tunarr files" "$(c 'hs\.eventtap\.new')" 0
