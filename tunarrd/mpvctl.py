@@ -3,9 +3,9 @@ import json, os, socket, subprocess, threading, time
 
 
 class MPV:
-    def __init__(self, path, sock, on_exit=None):
-        self.path, self.sock, self.on_exit = path, sock, on_exit
-        self.proc = None; self._conn = None; self._lock = threading.Lock(); self._rid = 0
+    def __init__(self, path, sock, on_exit=None, on_event=None):
+        self.path, self.sock, self.on_exit, self.on_event = path, sock, on_exit, on_event
+        self.proc = None; self._conn = None; self._lock = threading.Lock(); self._rid = 0; self._replies = {}
 
     @property
     def pid(self):
@@ -22,8 +22,21 @@ class MPV:
     def _reader(self, conn):
         """Drain replies continuously so mpv's IPC output can never fill."""
         try:
-            while conn.recv(4096):
-                pass
+            pending = b''
+            while True:
+                data = conn.recv(4096)
+                if not data: break
+                pending += data
+                while b'\n' in pending:
+                    line, pending = pending.split(b'\n', 1)
+                    try: reply = json.loads(line)
+                    except json.JSONDecodeError: continue
+                    rid = reply.get('request_id')
+                    if rid in self._replies:
+                        self._replies[rid]['reply'] = reply; self._replies[rid]['event'].set()
+                    elif reply.get('event') and self.on_event:
+                        try: self.on_event(reply)
+                        except Exception: pass
         except OSError:
             pass
         finally:
@@ -45,6 +58,18 @@ class MPV:
                     self._conn = None
                     time.sleep(.03)
         return False
+
+    def get_property(self, name, timeout=.5):
+        with self._lock:
+            self._rid += 1; rid = self._rid
+            event = threading.Event(); self._replies[rid] = {'event': event}
+            try:
+                self._connect().sendall(json.dumps({'command':['get_property', name], 'request_id':rid}).encode()+b'\n')
+            except OSError:
+                self._replies.pop(rid, None); return None
+        event.wait(timeout)
+        reply = self._replies.pop(rid, {}).get('reply', {})
+        return reply.get('data') if reply.get('error') == 'success' else None
 
     def start(self, args):
         self.quit_leftover()
