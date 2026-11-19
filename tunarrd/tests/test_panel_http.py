@@ -260,6 +260,8 @@ class Panel(unittest.TestCase):
 
     def test_xray_want_from_mpv_is_answered_once_then_cached(self):
         self.play(5)
+        argsf = Path(str(self.log) + '.args'); self.wait_for(argsf.exists, 'mpv started')
+        self.assertIn(str(ROOT / 'xray.lua'), argsf.read_text()); self.assertIn(str(ROOT / 'static.lua'), argsf.read_text())
         want = json.dumps({'event': 'client-message', 'args': ['tunarr-xray-want']}) + '\n'
         emit = Path(str(self.log) + '.emit')
         def sets(): return [c for c in self.cmds() if c[:3] == ['script-message-to', 'xray', 'set']]
