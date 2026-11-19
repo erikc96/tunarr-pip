@@ -12,6 +12,7 @@ try: os.unlink(s)
 except FileNotFoundError: pass
 x = socket.socket(socket.AF_UNIX); x.bind(s); x.listen(5)
 log = os.environ['MPV_LOG']; emit = log + '.emit'
+open(log + '.args', 'w').write(' '.join(sys.argv[1:]))
 def pump(c):
   seen = 0
   while True:
@@ -117,7 +118,8 @@ class Panel(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.d = Path(self.tmp.name)
-        for name, text in (('mpv.py', MPV_STUB), ('fzf.py', FZF_STUB), ('open.sh', OPEN_STUB)):
+        for name, text in (('mpv.py', MPV_STUB), ('fzf.py', FZF_STUB), ('open.sh', OPEN_STUB),
+                           ('probe.sh', '#!/bin/sh\ncat "$(dirname "$0")/probe.out" 2>/dev/null\n'), ('connect.sh', OPEN_STUB.replace('$@', 'connect'))):
             (self.d / name).write_text(text); (self.d / name).chmod(0o755)
         self.log = self.d / 'log'; self.open_log = self.d / 'open.log'; Site.log = []
         self.tunarr = ThreadingHTTPServer(('127.0.0.1', 0), Tunarr); self.site = ThreadingHTTPServer(('127.0.0.1', 0), Site)
@@ -125,7 +127,8 @@ class Panel(unittest.TestCase):
         s = socket.socket(); s.bind(('127.0.0.1', 0)); self.port = s.getsockname()[1]; s.close()
         (self.d / 'cfg').mkdir()
         cfg = {'baseUrl': 'http://127.0.0.1:%d' % self.tunarr.server_port, 'tvUrl': 'http://127.0.0.1:%d' % self.site.server_port, 'tvUser': 'u',
-               'fzf': str(self.d / 'fzf.py'), 'open': str(self.d / 'open.sh'), 'cast': [{'name': 'IPAD', 'rx': 'ipad'}, {'name': 'VAN', 'rx': 'van'}]}
+               'fzf': str(self.d / 'fzf.py'), 'open': str(self.d / 'open.sh'), 'cast': [{'name': 'IPAD', 'rx': 'ipad'}, {'name': 'VAN', 'rx': 'van'}, {'name': 'IPAD (SIDECAR)', 'screen': 'Sidecar'}],
+               'screenProbe': [str(self.d / 'probe.sh')], 'screenScript': str(self.d / 'connect.sh')}
         cfg.update(self.config); (self.d / 'cfg/config.json').write_text(json.dumps(cfg))
         env = os.environ.copy()
         env.update(TUNARRD_DIR=str(self.d / 'cfg'), TUNARRD_PORT=str(self.port), TUNARRD_MPV=str(self.d / 'mpv.py'), TUNARRD_SOCK=str(self.d / 'mpv.sock'),
@@ -197,7 +200,7 @@ class Panel(unittest.TestCase):
         self.act(act='ready')
         c = self.sse()
         self.wait_for(lambda: len(c.events) >= 2, 'replay')
-        self.assertEqual(c.events[:2], [('tab', ['tv']), ('casts', [['IPAD', 'VAN']])])
+        self.assertEqual(c.events[:2], [('tab', ['tv']), ('casts', [['IPAD', 'VAN', 'IPAD (SIDECAR)']])])
 
     def test_channels_act_emits_list_and_now_playing(self):
         c = self.sse(); self.act(act='channels')
@@ -286,6 +289,17 @@ class Panel(unittest.TestCase):
         self.req('/cmd', {'cmd': 'cast', 'i': 1})
         self.wait_for(lambda: self.tv_gets('/api/cast/here'), 'cast/here asked')
         self.assertEqual(self.tv_gets('/api/cast/here')[0], '/api/cast/here?rx=ipad')
+
+    def test_sidecar_cast_entry_fills_the_screen_when_present_else_runs_the_connect_script(self):
+        (self.d / 'probe.out').write_text('Sidecar Display\n')
+        self.assertEqual(self.req('/cmd', {'cmd': 'cast', 'i': 3})[0], 202)
+        self.wait_for(lambda: self.state()['screen'] == 'Sidecar', 'playon Sidecar')
+        argsf = Path(str(self.log) + '.args'); self.wait_for(argsf.exists, 'mpv started'); args = argsf.read_text().split(); self.assertIn('--fullscreen', args); self.assertIn('--fs-screen-name=Sidecar', args)
+        self.assertFalse(self.open_log.exists())
+        self.req('/cmd', {'cmd': 'stop'}); self.wait_for(lambda: self.state()['screen'] is None, 'stopped')
+        (self.d / 'probe.out').write_text('Built-in Retina\n')
+        self.req('/cmd', {'cmd': 'cast', 'i': 3}); self.wait_for(self.open_log.exists, 'connect script')
+        self.assertEqual(self.open_log.read_text().split(), ['connect']); time.sleep(.2); self.assertIsNone(self.state()['screen'])
 
     def test_eval_is_forbidden_unless_enabled(self):
         self.assertEqual(self.req('/eval', {'js': '1'})[0], 403)

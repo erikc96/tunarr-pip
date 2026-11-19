@@ -191,14 +191,27 @@ class Daemon:
   req=Request(base.rstrip('/')+'/'+topic,data=message.encode(),method='POST',headers=headers or {})
   try:urlopen(req,timeout=5).read()
   except OSError:pass
+ def _screen_present(self,name):
+  probe=self.config.get('screenProbe') or ['/usr/sbin/system_profiler','SPDisplaysDataType']
+  try: return name.lower() in subprocess.run(probe,capture_output=True,text=True,timeout=10).stdout.lower()
+  except (OSError,subprocess.SubprocessError): return False
+ def _cast_screen(self,receiver):
+  # A cast entry with a screen (Sidecar) fills that display; if it isn't there yet, the connect script extends to it
+  # and then asks for playon itself (the old tunarrToIpad).
+  screen=receiver['screen']
+  if self._screen_present(screen): return self._playon({'screen':screen})
+  script=self.config.get('screenScript') or str(Path.home()/'.config/raycast/script-commands/tunarr-ipad.sh')
+  try: subprocess.Popen([script],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  except OSError: print('tunarrd: cannot run',script,file=sys.stderr)
  def cast(self,i):
-  if not self.tv:return
   casts=self.config.get('cast') or []
   try:
    if int(i)<1: return
    receiver=casts[int(i)-1]
   except (IndexError, TypeError, ValueError): return
   if not receiver:return
+  if receiver.get('screen') and not receiver.get('rx'): return self._cast_screen(receiver)
+  if not self.tv:return
   rx=receiver.get('rx'); wake=receiver.get('wake')
   if not rx:return
   status,data,_=self.tv.request('GET','/api/cast/here?rx='+rx)
