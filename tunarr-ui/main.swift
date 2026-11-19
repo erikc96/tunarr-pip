@@ -61,7 +61,7 @@ func playerWindow(pid: Int) -> (Frame?, Bool) {
     var best: (Frame, CGFloat)?
     for window in info {
         guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue == pid,
-              (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+              (0...3).contains((window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1), // mpv --ontop is layer 3 (floating), measured 2026-11-19
               (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
               let bounds = window[kCGWindowBounds as String] as? NSDictionary,
               let rect = CGRect(dictionaryRepresentation: bounds), rect.width > 1, rect.height > 1 else { continue }
@@ -97,7 +97,8 @@ final class UIEvents: NSObject, URLSessionDataDelegate {
             let line = String(buffer[buffer.startIndex..<range.lowerBound]); buffer.removeSubrange(buffer.startIndex...range.lowerBound)
             if line.hasPrefix("event:") { event = line.dropFirst(6).trimmingCharacters(in: .whitespaces) }
             else if line.hasPrefix("data:"), event == "ui",
-                    let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any] { onUI?(object) }
+                    let parsed = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)),
+                    let object = (parsed as? [String: Any]) ?? (parsed as? [[String: Any]])?.first { onUI?(object) } // tunarrd sends every verb's data as an argument array
             else if line.isEmpty { event = "" }
         }
     }
@@ -292,6 +293,12 @@ if arguments.contains("--selftest") {
     for mood in ["watching", "happy", "ok", "hungry", "sad", "static"] { _ = fuzzImage(mood); print("icon \(mood): ok") }
     let conversion = cgFrameToNS(Frame(x: 10, y: 20, w: 30, h: 40), primaryHeight: 900)
     precondition(conversion == Frame(x: 10, y: 840, w: 30, h: 40)); print("CG-to-NSScreen: ok")
+    // The SSE reader must open the panel for tunarrd's real wire format: data is an argument array.
+    let events = UIEvents(request: URLRequest(url: URL(string: "http://127.0.0.1:1/events")!)); var seen: [[String: Any]] = []
+    events.onUI = { seen.append($0) }
+    let wire = "event: ui\ndata: [{\"open\":true,\"tab\":\"xray\",\"find\":false}]\n\nevent: tab\ndata: [\"tv\"]\n\nevent: ui\ndata: [{\"close\":true}]\n\n"
+    events.urlSession(events.session, dataTask: events.session.dataTask(with: events.request), didReceive: Data(wire.utf8))
+    precondition(seen.count == 2 && seen[0]["open"] as? Bool == true && seen[0]["tab"] as? String == "xray" && seen[1]["close"] as? Bool == true); print("ui events: ok")
     exit(0)
 }
 if arguments.contains("--print-frame") {
