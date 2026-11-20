@@ -97,10 +97,10 @@ local names = {}       -- channel number -> name
 local function chanSrc(n)
   if M.config.streamViaTv and COOKIE then
     return { channel = n, title = 'Tunarr ch' .. n, header = 'Cookie: ' .. COOKIE,
-      url = string.format('%s/api/stream/%d', M.config.tvUrl, n) }
+      url = string.format('%s/api/stream/%d?size=pip', M.config.tvUrl, n) }
   end
   return { channel = n, title = 'Tunarr ch' .. n, header = 'Authorization: ' .. AUTH,
-    url = string.format('%s/stream/channels/%d.ts', M.config.baseUrl, n) }
+    url = string.format('%s/stream/channels/%d.ts?size=pip', M.config.baseUrl, n) }
 end
 
 local function running()
@@ -265,7 +265,16 @@ local function start(src)
     unbeat()
     task, current, hidden, fullScreen = nil, nil, false, nil
     if exitCode ~= 0 and not stopping then
-      hs.alert.show('Tunarr PiP: stream ended (' .. tostring(exitCode) .. ')')
+      -- A 503 means Tunarr is out of transcode capacity: say so, retry in 5 s.
+      local ch, header = src.channel, src.header
+      hs.task.new('/usr/bin/curl', function(_, out)
+        if (out or ''):match('503') and ch and not src.tape then
+          hs.alert.show('Channel busy, retrying…', 3)
+          hs.timer.doAfter(5, function() if not task then M.play(ch) end end)
+        else
+          hs.alert.show('Tunarr PiP: stream ended (' .. tostring(exitCode) .. ')')
+        end
+      end, { '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '4', '-H', header, src.url }):start()
     end
     stopping = false
   end, args)
@@ -870,6 +879,28 @@ local function panelVisible()
   return panel ~= nil and panel:isVisible()
 end
 
+-- The preloaded page can go blank (WebKit drops the content process of a
+-- long-hidden webview, or the page never finishes loading). A moment after it
+-- opens, probe the DOM; if the probe doesn't answer true, rebuild and retry.
+local findPending = false
+local findWanted = false -- opt-9 asked for "find a channel" and the page hasn't confirmed ready yet
+local healPanel
+healPanel = function(tries)
+  local p = panel
+  local ok = false
+  p:evaluateJavaScript("typeof app==='object' && document.body && document.body.innerText.length>0", function(r) ok = r == true end)
+  hs.timer.doAfter(1.5, function()
+    if ok or panel ~= p or not panelVisible() then return end
+    p:delete()
+    makePanel()
+    findPending = findWanted
+    dock()
+    panel:show()
+    focusPanel()
+    if tries > 1 then healPanel(tries - 1) end
+  end)
+end
+
 -- Open the panel on a tab ('club' or 'vhs'); the same call again closes it.
 function M.panel(tab)
   if not tvOn() then
@@ -887,20 +918,7 @@ function M.panel(tab)
   dock()
   panel:show()
   focusPanel()
-  -- The preloaded page can go blank (WebKit drops the content process of a
-  -- long-hidden webview); if it doesn't answer a ping, rebuild it.
-  if panelReady then
-    local pong = false
-    panel:evaluateJavaScript('1', function() pong = true end)
-    hs.timer.doAfter(1, function()
-      if pong or not panel then return end
-      panel:delete()
-      makePanel()
-      dock()
-      panel:show()
-      focusPanel()
-    end)
-  end
+  healPanel(2)
   js('tab', J(tab))
   if shelfCache then pushShelves() end
   panelPush()
@@ -910,7 +928,6 @@ end
 function M.vhs() M.panel('vhs') end
 
 -- opt-9: the TV tab with "find a channel" focused; again hides it. False without tvUrl.
-local findPending = false
 function M.find()
   if not tvOn() then return false end
   M.refreshReceivers()
@@ -919,6 +936,7 @@ function M.find()
     return true
   end
   M.panel('tv')
+  findWanted = true
   findPending = not panelReady -- a new panel focuses it once it's ready
   js('find')
   return true
@@ -1010,6 +1028,7 @@ local REMOTE = {
 onMessage = function(m)
   if m.act == 'ready' then
     panelReady = true
+    findWanted = false
     js('tab', J(panelTab))
     if findPending then findPending = false; js('find') end
     local casts = {}
@@ -1342,6 +1361,30 @@ local xrayWheel = hs.eventtap.new({ hs.eventtap.event.types.scrollWheel }, funct
 end):start()
 M.xrayHover = xrayHover -- for debugging/tests
 
+-- A missing Keychain item turns hotkeys off; say so where it lasts, not in an 8-second banner.
+-- Notification stays until clicked (withdrawAfter 0); one dated line goes to the log file.
+local function keyName(k)
+  if type(k) == 'table' then
+    local m = {}
+    for _, x in ipairs(k[1]) do m[#m + 1] = (x == 'alt' and 'Opt' or x:gsub('^%l', string.upper)) end
+    return table.concat(m, '+') .. '+' .. k[2]
+  end
+  return k and ('Opt+' .. k) or '?'
+end
+
+local function loudFail(service, account, off)
+  local msg = string.format("Keychain item '%s' (account %s) is missing, so %s are off. See the README.",
+    service, account, off)
+  hs.printf('tunarr_pip: %s', msg)
+  local dir = os.getenv('HOME') .. '/.local/state/tunarr-pip'
+  hs.execute("/bin/mkdir -p '" .. dir .. "'")
+  local f = io.open(dir .. '/tunarr-pip.log', 'a')
+  if f then f:write(os.date('%Y-%m-%d %H:%M:%S '), msg, '\n'); f:close() end
+  hs.notify.new({ title = 'Tunarr PiP: keys are off', informativeText = msg, withdrawAfter = 0 }):send()
+  hs.alert.show('Tunarr PiP: ' .. msg, 8)
+  return msg
+end
+
 function M.setup(opts)
   local c = M.config
   for k, v in pairs(opts or {}) do c[k] = v end
@@ -1354,7 +1397,9 @@ function M.setup(opts)
   local pw, ok = hs.execute(string.format(
     "/usr/bin/security find-generic-password -s tunarr-pip -a '%s' -w", c.user))
   if not ok then
-    hs.alert.show('Tunarr PiP: no Keychain password for ' .. c.user .. ' (see README)', 8)
+    local msg = loudFail('tunarr-pip', c.user, string.format('the picker (%s), the channel keys and the stop key (%s)',
+      keyName(c.pickerKey), keyName(c.stopKey)))
+    bind(c.pickerKey, function() hs.alert.show('Tunarr PiP: ' .. msg, 8) end) -- not a silent key
     return M
   end
   AUTH = 'Basic ' .. hs.base64.encode(c.user .. ':' .. pw:gsub('%s+$', ''))
@@ -1400,7 +1445,7 @@ function M.setup(opts)
       M.refreshReceivers()
       M.receiverTimer = hs.timer.doEvery(15, M.refreshReceivers)
     else
-      hs.alert.show('Tunarr PiP: no Keychain password for craigo-tv ' .. c.tvUser .. ' (see README)', 8)
+      loudFail('craigo-tv', c.tvUser, string.format('the VHS keys (%s, %s), the Fuzz menu bar item and the panel', keyName(c.vhsKey), keyName(c.vhsNowKey)))
     end
   end
 
