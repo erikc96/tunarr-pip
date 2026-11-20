@@ -2,7 +2,7 @@
 
 A picture-in-picture TV player for macOS. Press a key and a [Tunarr](https://github.com/chrisbenincasa/tunarr) channel starts playing in a small borderless window that floats in the corner of your screen, above everything else. You can flip channels the way you would on an old TV, with static on screen while the next channel tunes in.
 
-It's a [Hammerspoon](https://www.hammerspoon.org) module that drives [mpv](https://mpv.io). It works with any Tunarr server that sits behind HTTPS with basic auth (a username and password).
+It is two small background programs and a few keys. `tunarrd` (Python, standard library only) drives [mpv](https://mpv.io) and talks to the servers; `tunarr-ui` (one Swift file) is the Fuzz menu-bar item and panel; [Hammerspoon](https://www.hammerspoon.org) only binds the keys, each one a single async request to `tunarrd`, so a slow player can never freeze your keyboard. It works with any Tunarr server that sits behind HTTPS with basic auth (a username and password).
 
 ## Keys
 
@@ -25,19 +25,20 @@ A channel takes 3–4 seconds to start. Static fills the player while it loads, 
 
 You need a Mac, [Homebrew](https://brew.sh), and a Tunarr address, username and password from whoever runs the server.
 
-**1. Install Hammerspoon and mpv.** In Terminal:
+**1. Install the tools.** In Terminal:
 
 ```sh
 brew install --cask hammerspoon
-brew install mpv fzf
+brew install mpv fzf python
 ```
 
-**2. Start Hammerspoon.** Open it from Applications. When it asks, give it Accessibility access (System Settings → Privacy & Security → Accessibility). This is what lets it respond to the keys. In its preferences, tick **Launch Hammerspoon at login**.
+**2. Start Hammerspoon.** Open it from Applications and give it Accessibility access (System Settings → Privacy & Security → Accessibility), so it can see the keys. Tick **Launch Hammerspoon at login** in its preferences.
 
-**3. Download this module** into Hammerspoon's config folder:
+**3. Get this repo and build the panel app.**
 
 ```sh
-git clone https://github.com/erikc96/tunarr-pip ~/.hammerspoon/tunarr_pip
+git clone https://github.com/erikc96/tunarr-pip ~/projects/tunarr-pip
+bash ~/projects/tunarr-pip/tunarr-ui/build.sh
 ```
 
 **4. Save your password in the Keychain.** Replace `YOUR_USERNAME` with your username. It asks for the password and doesn't show it as you type:
@@ -46,44 +47,52 @@ git clone https://github.com/erikc96/tunarr-pip ~/.hammerspoon/tunarr_pip
 security add-generic-password -s tunarr-pip -a YOUR_USERNAME -w
 ```
 
-**5. Tell Hammerspoon to load it.** Open (or create) `~/.hammerspoon/init.lua`:
+**5. Write the config.** Create `~/Library/Application Support/tunarr-pip/config.json`:
+
+```json
+{ "baseUrl": "https://tunarr.example.com", "user": "YOUR_USERNAME" }
+```
+
+**6. Start the player and panel.** This installs two LaunchAgents (`com.erik.tunarr-pip.daemon` and `.ui`) that start at login and restart if they stop:
 
 ```sh
-open -a TextEdit ~/.hammerspoon/init.lua   # if it doesn't exist: touch ~/.hammerspoon/init.lua first
+bash ~/projects/tunarr-pip/launchd/install.sh
 ```
 
-Add these lines, using your server address and username:
+**7. Give Hammerspoon the keys.** Link the key module into Hammerspoon's folder and load it from `~/.hammerspoon/init.lua`:
+
+```sh
+ln -s ~/projects/tunarr-pip/hammerspoon/tunarr_keys.lua ~/.hammerspoon/tunarr_keys.lua
+```
 
 ```lua
-tunarrPip = require('tunarr_pip').setup({
-  baseUrl = 'https://tunarr.example.com',
-  user = 'YOUR_USERNAME',
-})
+tunarrPip = require('tunarr_keys').setup({ channelKeys = { '1', '2', '3' } }) -- ⌥1 ⌥2 ⌥3 play channels 1-3; {} for none
 ```
 
-**6. Reload.** Click the Hammerspoon icon in the menu bar and choose **Reload Config**. Then press **⌥1**.
+Choose **Reload Config** from the Hammerspoon menu, then press **⌥9**.
 
 ## Options
 
-Any setting in `M.config` at the top of `init.lua` can go in `setup({...})`. For example:
+Everything about the player goes in `config.json`; `tunarrd` reads it at start (restart it with `launchctl kickstart -k gui/$(id -u)/com.erik.tunarr-pip.daemon`). The keys are in `tunarr_keys.lua`'s `setup({...})` (`channelKeys`, and `pickerKey`, `stopKey`, `upKey`, `downKey`, `randomKey`, `volUpKey`, `volDownKey`, `volStep`).
 
-```lua
-tunarrPip = require('tunarr_pip').setup({
-  baseUrl = 'https://tunarr.example.com',
-  user = 'YOUR_USERNAME',
-  width = 640, height = 360,   -- player size in points
-  upKey = '=', downKey = '-',  -- ⌥= / ⌥- for channel up/down
-  randomKey = nil,             -- no random key
-  warmMinutes = 5,             -- how long a hidden player stays connected
-  -- CAST in the Fuzz panel's TV tab (or C there): where else to play
-  cast = { { name = 'TV', run = function() tunarrPip.playOn('LG TV') end } },
-  -- or a browser receiver: tvUrl/?cast=<name> open on another device. The optional second argument
-  -- is an ntfy topic pushed ("tunarr cast") when that receiver isn't open:
-  -- cast = { { name = 'VAN', run = function() tunarrPip.castWeb('van', 'my-van-topic') end } }
-})
+```json
+{
+  "baseUrl": "https://tunarr.example.com",
+  "user": "YOUR_USERNAME",
+  "width": 640, "height": 360,
+  "warmMinutes": 5,
+  "volStep": 5,
+  "mpvExtra": ["--volume=30"],
+  "cast": [
+    { "name": "VAN", "rx": "van", "wake": "my-van-topic" },
+    { "name": "IPAD (SIDECAR)", "screen": "Sidecar" }
+  ]
+}
 ```
 
-Hammerspoon takes over the keys, so while it runs **⌥[**, **⌥]** and **⌥\\** no longer type “ ‘ «, and **⌥0–9** no longer type º¡™£¢∞§¶•ª. If you type any of those, move the player to other keys as shown above. Set a key to `nil` to turn it off.
+`cast` is the panel's CAST list: an entry with `rx` opens a browser receiver (`tvUrl/?cast=<rx>`; `wake` is an ntfy topic pushed when it isn't open), an entry with `screen` plays full screen on that display (running `screenScript` first if the display isn't connected yet). Also: `canaryUrl` (warn hourly if this URL answers), `streamViaTv` (play through the tv site's stream, which beats a bad direct route), `fzf`, `mpv`.
+
+Hammerspoon takes over the keys, so while it runs **⌥[**, **⌥]** and **⌥\\** no longer type “ ‘ «, and **⌥0–9** no longer type º¡™£¢∞§¶•ª. Change the key names in `setup({...})` if you type any of those.
 
 ## tv.craigoslist.com/tv club and VHS (optional)
 
@@ -102,11 +111,11 @@ Save your tv.craigoslist.com/tv password in the Keychain:
 security add-generic-password -s craigo-tv -a YOUR_TV_USERNAME -w
 ```
 
-and add two lines to `setup({...})`:
+and add two lines to `config.json`:
 
-```lua
-  tvUrl = 'https://tv.craigoslist.com/tv',
-  tvUser = 'YOUR_TV_USERNAME',
+```json
+  "tvUrl": "https://tv.craigoslist.com/tv",
+  "tvUser": "YOUR_TV_USERNAME",
 ```
 
 ## Watching on a TV
@@ -116,28 +125,32 @@ The same channels play in a browser at [tv.craigoslist.com/tv](https://tv.craigo
 ## Updating
 
 ```sh
-git -C ~/.hammerspoon/tunarr_pip pull
+git -C ~/projects/tunarr-pip pull
+bash ~/projects/tunarr-pip/tunarr-ui/build.sh
+bash ~/projects/tunarr-pip/launchd/install.sh
 ```
 
-Then choose **Reload Config** from the Hammerspoon menu.
+Then choose **Reload Config** from the Hammerspoon menu if `hammerspoon/tunarr_keys.lua` changed.
 
 ## Troubleshooting
 
-- **Nothing happens when I press ⌥1.** Hammerspoon needs Accessibility access (step 2). Open its **Console** from the menu bar icon and look for red errors.
-- **"no Keychain password for …"** The username in `setup()` must match the one you gave in step 4 exactly.
-- **"stream ended (…)" / "Tunarr unreachable (HTTP 401)"** The password is wrong. Delete it with `security delete-generic-password -s tunarr-pip -a YOUR_USERNAME`, then repeat step 4.
+- **Nothing happens when I press ⌥9.** Check that `tunarrd` is running: `launchctl list | grep tunarr-pip`, and read `~/Library/Logs/tunarr-pip-daemon.log`. Hammerspoon shows "Tunarr: no token file" when the daemon has never started, and needs Accessibility access (step 2). Open its **Console** from the menu bar icon and look for red errors.
+- **"no keychain password"** in the daemon log: the `user` in `config.json` must match the one you gave in step 4 exactly.
+- **"stream ended (…)" / "Tunarr unreachable (HTTP 401)"** The password is wrong. Delete it with `security delete-generic-password -s tunarr-pip -a YOUR_USERNAME`, then repeat step 4 and restart the daemon.
 - **HTTP 403** Your login works, but it isn't allowed to do that. Ask whoever runs the server.
 - **Endless static** The channel isn't starting on the server. Try another channel, and tell whoever runs the server.
+- **Is it alive?** `curl -H "X-Tunarr-Token: $(cat ~/Library/Application\ Support/tunarr-pip/token)" http://127.0.0.1:7849/state`
 
 ## Uninstall
 
 ```sh
-rm -rf ~/.hammerspoon/tunarr_pip
+bash ~/projects/tunarr-pip/launchd/install.sh --uninstall
+rm -rf ~/Library/Application\ Support/tunarr-pip ~/.hammerspoon/tunarr_keys.lua
 security delete-generic-password -s tunarr-pip -a YOUR_USERNAME
 ```
 
 Then remove the `tunarrPip = …` lines from `~/.hammerspoon/init.lua`.
 
-## License
+## Development
 
-MIT
+Tests: `python3 -W ignore -m unittest discover -s tunarrd/tests` (they start their own daemons and stub servers, so they run beside the installed one) and `tunarr-ui/build/tunarr-ui --selftest`. The old all-Hammerspoon player is `init.lua` in this repo, kept for reference only; the installed player does not load it.

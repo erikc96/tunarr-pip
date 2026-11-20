@@ -115,7 +115,14 @@ input:focus { border-color: var(--osd); }
   <div id="showView" hidden></div>
 </main>
 <script>
-const send = (m) => webkit.messageHandlers.fuzz.postMessage(m);
+// Two hosts, one page: hs.webview (webkit handler) and the tunarrd-served page (same-origin fetch + SSE).
+const HTTP = location.protocol === "http:";
+const send = (m) => {
+  const h = window.webkit && webkit.messageHandlers && webkit.messageHandlers.fuzz;
+  if (!HTTP) { if (h) h.postMessage(m); return; }
+  fetch("/act" + location.search, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(m) }).catch(() => {});
+  if (m.act === "close" && h) h.postMessage(m); // the native host hides its window
+};
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const pad = (n) => String(n).padStart(2, "0");
@@ -544,6 +551,12 @@ document.addEventListener("mouseover", (e) => {
 });
 document.addEventListener("mouseleave", () => { tipEl.hidden = true; });
 document.addEventListener("mousedown", () => { tipEl.hidden = true; });
+if (HTTP) { // the daemon pushes what Hammerspoon used to evaluate into the page
+  const es = new EventSource("/events" + location.search);
+  for (const v of ["tab", "channels", "show", "shelves", "filtered", "now", "np", "current", "xray", "person", "vibe", "cover", "find", "surf", "casts"])
+    es.addEventListener(v, (e) => app[v](...JSON.parse(e.data)));
+  es.addEventListener("eval", (e) => (0, eval)(JSON.parse(e.data)[0])); // POST /eval, off unless evalEnabled
+}
 send({ act: "ready" });
 </script>
 </body></html>
