@@ -12,15 +12,12 @@ class Bus:
         self.lock = threading.Lock()
         self.clients = []
         self.saved = {}
-        self.find_pending = False
 
     def emit(self, verb, *args):
         event = 'event: %s\ndata: %s\n\n' % (verb, json.dumps(list(args), separators=(',', ':')))
         with self.lock:
             if verb in STATEFUL:
                 self.saved[verb] = event
-            if verb == 'find':
-                self.find_pending = True
             for client in self.clients[:]:
                 client.put(event)
 
@@ -32,9 +29,6 @@ class Bus:
             for verb in ('tab', 'casts', 'vibe', 'now', 'current', 'surf', 'shelves'):
                 if verb in self.saved:
                     q.put(self.saved[verb])
-            if self.find_pending:
-                q.put('event: find\ndata: []\n\n')
-                self.find_pending = False
         return q
 
     def disconnect(self, q):
